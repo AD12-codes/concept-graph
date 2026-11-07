@@ -82,7 +82,7 @@ The `summary` is one plain sentence a beginner would understand. The snippet `no
 
 Tell the owner where the file is and how to see it:
 
-- open https://viewer.ad12-codes.work and drop the file in, or
-- commit the file and open `https://viewer.ad12-codes.work/?src=<raw GitHub URL of the file>` for a link they can share.
+- open https://ad12-codes.work/viewer and drop the file in, or
+- commit the file and open `https://ad12-codes.work/viewer?src=<raw GitHub URL of the file>` for a link they can share.
 
 Remind them that the snippets are now content: if the repo is private, decide before publishing the JSON whether those 10 to 40 line excerpts are fine to show.
