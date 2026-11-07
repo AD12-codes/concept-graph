@@ -3,7 +3,7 @@
 A Claude Code skill that reads a repo and writes a **concept graph**: a map of the ideas inside the code (auth, rate limiting, state management, queues, caching…), each explained in plain words with the real snippet that implements it. Plus a viewer to explore the result.
 
 - Live examples: [PrepTalk](https://ad12-codes.work/concepts/preptalk), [TypeNinja](https://ad12-codes.work/concepts/typeninja), [Sightify](https://ad12-codes.work/concepts/sightify)
-- Viewer for your own graphs: **https://viewer.ad12-codes.work**
+- Viewer for your own graphs: **https://ad12-codes.work/viewer**
 
 The idea: you build things with AI faster than you learn them. The graph is the learning layer. Root is your project, the first ring is a fixed set of categories, deeper nodes are the concepts the skill found, and clicking a leaf opens a short explanation written for someone who uses the tool daily but never had it explained.
 
@@ -44,11 +44,11 @@ Run it again later to refresh snippets after the code changed. Existing node ids
 
 ## See it
 
-1. Open https://viewer.ad12-codes.work and drop the JSON in. Everything renders in your browser, nothing is uploaded.
+1. Open https://ad12-codes.work/viewer and drop the JSON in. Everything renders in your browser, nothing is uploaded.
 2. Or commit the file and share a link:
 
 ```
-https://viewer.ad12-codes.work/?src=https://raw.githubusercontent.com/you/my-app/main/concepts/my-app.json
+https://ad12-codes.work/viewer?src=https://raw.githubusercontent.com/you/my-app/main/concepts/my-app.json
 ```
 
 Any https URL that allows cross-origin reads works. Raw GitHub and gist links do.
