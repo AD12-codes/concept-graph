@@ -1,0 +1,1364 @@
+{
+  "project": "typeninja",
+  "name": "TypeNinja",
+  "repo": "https://github.com/AD12-codes/type-ninja",
+  "repoPrivate": false,
+  "commit": "c4b8df7",
+  "generatedAt": "2026-10-09",
+  "nodes": [
+    {
+      "id": "auth/better-auth",
+      "title": "Better Auth: optional accounts, username sign-in",
+      "summary": "You can type without an account; Better Auth handles email, password, username and optional GitHub or Google sign-in when you want to save results.",
+      "explanation": "**What problem it solves.** A typing test should work the moment the page loads, but leaderboards and history need to know who you are. Writing your own password hashing, session rows and OAuth callbacks is where most hobby apps leak accounts. TypeNinja hands all of that to Better Auth and keeps accounts optional.\n\n**How it works here.** `createAuth()` in `packages/auth/src/index.ts` builds one Better Auth instance on top of the Drizzle database. Email and password sign-up is on, with the `username` plugin so people can log in with either an email or a handle; `isUsernameValid` enforces length, allowed characters and a reserved list (`admin`, `me`, ...) so nobody can grab a profile URL like `/profile/admin`. GitHub and Google are only added when their client id and secret exist in the env, and `enabledSocialProviders()` tells the web app which buttons to show through `/api/v1/meta`. In `apps/web/src/routes/login.tsx`, the form looks for an `@` to decide between `signIn.email` and `signIn.username`.\n\n**What breaks without it.** No results could be saved, the leaderboard would have no names, and any home-made login would be a liability.\n\n**Why this choice.** Better Auth runs inside the same Bun process and writes to your own Postgres tables, so there is no third-party auth service to pay for or depend on.",
+      "code": [
+        {
+          "file": "packages/auth/src/index.ts",
+          "lang": "ts",
+          "lines": "24-41",
+          "snippet": "const RESERVED_USERNAMES = new Set([\n\t\"admin\",\n\t\"administrator\",\n\t\"typeninja\",\n\t\"root\",\n\t\"system\",\n\t\"support\",\n\t\"me\",\n]);\n\nexport function isUsernameValid(value: string): boolean {\n\treturn (\n\t\tvalue.length >= USERNAME_MIN &&\n\t\tvalue.length <= USERNAME_MAX &&\n\t\tUSERNAME_REGEX.test(value) &&\n\t\t!RESERVED_USERNAMES.has(value.toLowerCase())\n\t);\n}",
+          "note": "Lines 24-32 are the reserved handles; line 34 is the validator the username plugin calls on sign-up."
+        },
+        {
+          "file": "packages/auth/src/index.ts",
+          "lang": "ts",
+          "lines": "43-64",
+          "snippet": "function socialProviders(): BetterAuthOptions[\"socialProviders\"] {\n\tconst providers: NonNullable<BetterAuthOptions[\"socialProviders\"]> = {};\n\tif (env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET) {\n\t\tproviders.github = {\n\t\t\tclientId: env.GITHUB_CLIENT_ID,\n\t\t\tclientSecret: env.GITHUB_CLIENT_SECRET,\n\t\t};\n\t}\n\tif (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {\n\t\tproviders.google = {\n\t\t\tprompt: \"select_account\",\n\t\t\tclientId: env.GOOGLE_CLIENT_ID,\n\t\t\tclientSecret: env.GOOGLE_CLIENT_SECRET,\n\t\t};\n\t}\n\treturn providers;\n}\n\n/** Social providers that are configured, exposed to the web client. */\nexport function enabledSocialProviders(): string[] {\n\treturn Object.keys(socialProviders() ?? {});\n}",
+          "note": "Social providers appear only when both env values exist, and line 62 exposes the enabled list to the client."
+        },
+        {
+          "file": "packages/auth/src/index.ts",
+          "lang": "ts",
+          "lines": "98-109",
+          "snippet": "\t\temailAndPassword: {\n\t\t\tenabled: true,\n\t\t\tminPasswordLength: PASSWORD_MIN,\n\t\t\trequireEmailVerification: false,\n\t\t\tsendResetPassword: async ({ user, url }) => {\n\t\t\t\tawait sendMail({\n\t\t\t\t\tto: user.email,\n\t\t\t\t\tsubject: \"typeninja: reset your password\",\n\t\t\t\t\ttext: `Hi ${user.name},\\n\\nReset your typeninja password using this link:\\n${url}\\n\\nIf you did not request this, you can ignore this email.`,\n\t\t\t\t});\n\t\t\t},\n\t\t},",
+          "note": "Email and password are on; the password reset mail is sent through the project's own mailer."
+        },
+        {
+          "file": "packages/auth/src/index.ts",
+          "lang": "ts",
+          "lines": "120-127",
+          "snippet": "\t\tsocialProviders: socialProviders(),\n\t\tplugins: [\n\t\t\tusername({\n\t\t\t\tminUsernameLength: USERNAME_MIN,\n\t\t\t\tmaxUsernameLength: USERNAME_MAX,\n\t\t\t\tusernameValidator: isUsernameValid,\n\t\t\t}),\n\t\t],",
+          "note": "The username plugin is configured with the same limits the web form and the API use."
+        },
+        {
+          "file": "apps/web/src/routes/login.tsx",
+          "lang": "tsx",
+          "lines": "183-203",
+          "snippet": "\t\tonSubmit: async ({ value }) => {\n\t\t\tsetSubmitting(true);\n\t\t\tconst isEmail = value.identifier.includes(\"@\");\n\t\t\tconst { error } = isEmail\n\t\t\t\t? await signIn.email({\n\t\t\t\t\t\temail: value.identifier,\n\t\t\t\t\t\tpassword: value.password,\n\t\t\t\t\t\trememberMe: value.remember,\n\t\t\t\t\t})\n\t\t\t\t: await signIn.username({\n\t\t\t\t\t\tusername: value.identifier,\n\t\t\t\t\t\tpassword: value.password,\n\t\t\t\t\t\trememberMe: value.remember,\n\t\t\t\t\t});\n\t\t\tsetSubmitting(false);\n\t\t\tif (error) {\n\t\t\t\ttoast.error(error.message ?? \"could not sign in\");\n\t\t\t\treturn;\n\t\t\t}\n\t\t\tnavigate({ to: \"/\" });\n\t\t},",
+          "note": "Line 185 picks email or username sign-in based on whether the identifier contains an @."
+        }
+      ],
+      "related": [
+        "auth/sessions-and-cookies",
+        "auth/optional-session-middleware",
+        "security/validated-env"
+      ],
+      "custom": false
+    },
+    {
+      "id": "auth/sessions-and-cookies",
+      "title": "Sessions in Postgres, cached in the cookie",
+      "summary": "After sign-in the browser holds a cookie; the matching session row lives in Postgres and a short cookie cache avoids a database read on every request.",
+      "explanation": "**What problem it solves.** HTTP forgets who you are the moment a request ends. Something has to carry identity between requests without putting user details where scripts or other sites can read them, and without hitting the database for every single API call.\n\n**How it works here.** Better Auth stores sessions in the `sessions` table from `packages/db/src/schema/auth.ts` (token, expiry, ip, user agent) and puts a signed cookie in the browser. In `packages/auth/src/index.ts` sessions last 30 days and are refreshed once a day (`updateAge`). `cookieCache` keeps a signed copy of the session in the cookie for five minutes, so `getSession` can answer from the cookie alone most of the time. The cost is staleness: when a user picks a new username, `refreshSession()` in `apps/web/src/lib/auth-client.ts` calls `getSession` with `disableCookieCache` to force a database read. Cookie flags are chosen by `sameOrigin`: `httpOnly` always, `lax` when the API serves the web app, `none` plus `secure` when they run on different origins in development.\n\n**What breaks without it.** Every request would be a database lookup, and without `httpOnly` an injected script could copy the cookie and act as the user.\n\n**Why this choice.** There is no Redis in this project, so the cookie cache is what keeps session checks cheap for a single-container deploy.",
+      "code": [
+        {
+          "file": "packages/auth/src/index.ts",
+          "lang": "ts",
+          "lines": "90-95",
+          "snippet": "\t\tsession: {\n\t\t\tmodelName: \"sessions\",\n\t\t\texpiresIn: SESSION_DAYS * SECONDS_PER_DAY,\n\t\t\tupdateAge: SECONDS_PER_DAY,\n\t\t\tcookieCache: { enabled: true, maxAge: 5 * 60 },\n\t\t},",
+          "note": "Line 94: five minutes of cookie-cached session, which is why most requests never touch the sessions table."
+        },
+        {
+          "file": "packages/auth/src/index.ts",
+          "lang": "ts",
+          "lines": "66-72",
+          "snippet": "function createAuth() {\n\tconst db = getDB();\n\tconst trustedOrigins = [env.BETTER_AUTH_URL, env.CORS_ORIGIN].filter(\n\t\t(origin): origin is string => Boolean(origin)\n\t);\n\tconst sameOrigin = !env.CORS_ORIGIN;\n",
+          "note": "Line 71 decides the cookie policy from whether a separate CORS origin is configured."
+        },
+        {
+          "file": "packages/auth/src/index.ts",
+          "lang": "ts",
+          "lines": "110-119",
+          "snippet": "\t\ttrustedOrigins,\n\t\tadvanced: {\n\t\t\tdefaultCookieAttributes: sameOrigin\n\t\t\t\t? {\n\t\t\t\t\t\tsameSite: \"lax\",\n\t\t\t\t\t\tsecure: env.NODE_ENV === \"production\",\n\t\t\t\t\t\thttpOnly: true,\n\t\t\t\t\t}\n\t\t\t\t: { sameSite: \"none\", secure: true, httpOnly: true },\n\t\t},",
+          "note": "httpOnly is always on; sameSite switches between lax and none depending on the deployment shape."
+        },
+        {
+          "file": "apps/web/src/lib/auth-client.ts",
+          "lang": "ts",
+          "lines": "12-18",
+          "snippet": "/**\n * Re-reads the session from the database, bypassing the cookie cache, so\n * profile changes (like a new username) show up immediately.\n */\nexport async function refreshSession() {\n\tawait authClient.getSession({ query: { disableCookieCache: true } });\n}",
+          "note": "The one place the cache is bypassed on purpose, right after a profile change."
+        },
+        {
+          "file": "packages/db/src/schema/auth.ts",
+          "lang": "ts",
+          "lines": "25-43",
+          "snippet": "export const sessions = pgTable(\n\t\"sessions\",\n\t{\n\t\tid: text(\"id\").primaryKey(),\n\t\texpiresAt: timestamp(\"expires_at\").notNull(),\n\t\ttoken: text(\"token\").notNull().unique(),\n\t\tcreatedAt: timestamp(\"created_at\").defaultNow().notNull(),\n\t\tupdatedAt: timestamp(\"updated_at\")\n\t\t\t.defaultNow()\n\t\t\t.$onUpdate(() => /* @__PURE__ */ new Date())\n\t\t\t.notNull(),\n\t\tipAddress: text(\"ip_address\"),\n\t\tuserAgent: text(\"user_agent\"),\n\t\tuserId: text(\"user_id\")\n\t\t\t.notNull()\n\t\t\t.references(() => users.id, { onDelete: \"cascade\" }),\n\t},\n\t(table) => [index(\"sessions_user_id_idx\").on(table.userId)]\n);",
+          "note": "The session row Better Auth writes; line 40 cascades deletes when a user is removed."
+        }
+      ],
+      "related": [
+        "auth/better-auth",
+        "networking/same-origin-deploy",
+        "auth/optional-session-middleware"
+      ],
+      "custom": false
+    },
+    {
+      "id": "auth/optional-session-middleware",
+      "title": "Resolve the session once, require it only where needed",
+      "summary": "Every API request learns who is asking; only results and profile routes refuse anonymous callers, and queries always filter by the caller's id.",
+      "explanation": "**What problem it solves.** Most of TypeNinja is public: snippets, algorithms and leaderboards work signed out. But the leaderboard still wants to highlight *your* row, and saving a result must be refused for strangers. One middleware that always resolves the session and a second one that demands it covers both cases.\n\n**How it works here.** `sessionMiddleware` in `apps/server/src/lib/auth-middleware.ts` runs on every `/api/*` request, asks Better Auth to read the cookie, and stores `user` and `session` on the Hono context (`null` when signed out). It never rejects. `requireAuth` throws `unauthorized()` when `user` is missing, and `requireUser(c)` gives handlers a typed, non-null user. `apps/server/src/routes/results.ts` applies `requireAuth` with `use(\"*\")` so a new route there is protected by default. Ownership is enforced in the query itself: `GET /results/:id` matches both the id and `results.userId = user.id`, so guessing someone else's result id returns a 404, not their data. The leaderboard route reads `c.get(\"user\")` optionally to fill the `me` entry.\n\n**What breaks without it.** Anyone could `POST /api/v1/results` for a made-up user, or read another person's history by id.\n\n**Why this choice.** Hono's typed context variables mean the user id is available to every handler and rate limiter without re-parsing the cookie.",
+      "code": [
+        {
+          "file": "apps/server/src/lib/auth-middleware.ts",
+          "lang": "ts",
+          "lines": "10-40",
+          "snippet": "/** Resolves the session for every request without requiring it. */\nexport const sessionMiddleware = createMiddleware<{ Variables: AuthVariables }>(\n\tasync (c, next) => {\n\t\tconst session = await getAuth().api.getSession({\n\t\t\theaders: c.req.raw.headers,\n\t\t});\n\t\tc.set(\"user\", session?.user ?? null);\n\t\tc.set(\"session\", session?.session ?? null);\n\t\tawait next();\n\t}\n);\n\n/** Rejects the request when no user is signed in. */\nexport const requireAuth = createMiddleware<{ Variables: AuthVariables }>(\n\tasync (c, next) => {\n\t\tif (!c.get(\"user\")) {\n\t\t\tthrow unauthorized();\n\t\t}\n\t\tawait next();\n\t}\n);\n\nexport function requireUser(c: {\n\tget: (key: \"user\") => Session[\"user\"] | null;\n}) {\n\tconst user = c.get(\"user\");\n\tif (!user) {\n\t\tthrow unauthorized();\n\t}\n\treturn user;\n}",
+          "note": "Line 13 resolves the cookie once per request; line 25 is the only place a missing user turns into a 401."
+        },
+        {
+          "file": "apps/server/src/app.ts",
+          "lang": "ts",
+          "lines": "41-48",
+          "snippet": "app.use(\"/api/*\", apiLimiter);\n// Mutating auth calls (sign-in, sign-up, password reset, account changes).\napp.post(\"/api/auth/*\", authLimiter);\napp.on([\"POST\", \"GET\"], \"/api/auth/*\", (c) => getAuth().handler(c.req.raw));\n\napp.use(\"/api/*\", sessionMiddleware);\napp.post(\"/api/v1/results\", resultsLimiter);\napp.route(\"/api/v1\", routes);",
+          "note": "Order matters: the session is resolved on line 46 before the results limiter on line 47 keys by user id."
+        },
+        {
+          "file": "apps/server/src/routes/results.ts",
+          "lang": "ts",
+          "lines": "27-29",
+          "snippet": "const resultsRoute = new Hono<{ Variables: AuthVariables }>();\n\nresultsRoute.use(\"*\", requireAuth);",
+          "note": "Every results route is protected by default."
+        },
+        {
+          "file": "apps/server/src/routes/results.ts",
+          "lang": "ts",
+          "lines": "84-96",
+          "snippet": "resultsRoute.get(\"/:id\", async (c) => {\n\tconst user = requireUser(c);\n\tconst db = getDB();\n\tconst [row] = await db\n\t\t.select({ result: results, algorithmName: algorithms.name })\n\t\t.from(results)\n\t\t.innerJoin(algorithms, eq(results.algorithmSlug, algorithms.slug))\n\t\t.where(and(eq(results.id, c.req.param(\"id\")), eq(results.userId, user.id)));\n\tif (!row) {\n\t\tthrow notFound(\"Result not found\");\n\t}\n\treturn c.json({ result: toResultDto(row.result, row.algorithmName) });\n});",
+          "note": "Line 91: the id alone is never enough, the row must also belong to the caller."
+        }
+      ],
+      "related": [
+        "auth/better-auth",
+        "rate-limiting/fixed-window-limiters",
+        "database/leaderboard-queries"
+      ],
+      "custom": false
+    },
+    {
+      "id": "security/server-side-result-validation",
+      "title": "Never trust the client's WPM",
+      "summary": "The browser computes the score, but the server re-derives speed and accuracy from the raw counts and rejects anything that does not add up.",
+      "explanation": "**What problem it solves.** The typing engine runs in the browser, so a cheater can open the dev tools and `POST` a 400 wpm result. A public leaderboard is only worth something if the server can tell a real run from a forged one.\n\n**How it works here.** The client sends the ingredients, not just the answer: character counts, keypress counts, duration and the per-second chart (`SubmitResultSchema` in `packages/shared/src/api.ts`). Zod first applies hard caps: wpm at most 400, duration at least one second, a bounded chart. Then `validateResultMath` in `apps/server/src/lib/results-service.ts` recomputes wpm and raw from `chars` and `durationMs` using the exact same `wpmFromChars` the browser used, and recomputes accuracy from keypresses; each must land within a small tolerance. It also checks the typed total does not exceed the snippet's stored `charCount` and that at least half the snippet was typed correctly. Only then does the transaction run. Separately, runs below 80% accuracy or in blind mode are saved but never ranked.\n\n**What breaks without it.** One curl command would top every leaderboard, and real users would stop caring.\n\n**Why this choice.** Re-deriving from counts is cheap and reuses the shared engine package, so there is one formula, not two that can drift.",
+      "code": [
+        {
+          "file": "apps/server/src/lib/results-service.ts",
+          "lang": "ts",
+          "lines": "18-60",
+          "snippet": "/** Tolerance when re-deriving speed and accuracy from the submitted counts. */\nconst WPM_TOLERANCE = 1.5;\nconst ACCURACY_TOLERANCE = 1;\nconst PERCENT = 100;\n\nexport function validateResultMath(\n\tbody: SubmitResult,\n\tsnippetCharCount: number\n) {\n\tconst scoredCorrect = body.chars.correct + body.chars.newlines;\n\tconst expectedWpm = wpmFromChars(scoredCorrect, body.durationMs);\n\tif (Math.abs(expectedWpm - body.wpm) > WPM_TOLERANCE) {\n\t\tthrow badRequest(\"Reported wpm does not match the typed characters\");\n\t}\n\tconst scoredRaw = scoredCorrect + body.chars.incorrect + body.chars.extra;\n\tconst expectedRaw = wpmFromChars(scoredRaw, body.durationMs);\n\tif (Math.abs(expectedRaw - body.raw) > WPM_TOLERANCE) {\n\t\tthrow badRequest(\"Reported raw wpm does not match the typed characters\");\n\t}\n\tconst keypresses = body.keypresses.correct + body.keypresses.incorrect;\n\tconst expectedAccuracy =\n\t\tkeypresses === 0\n\t\t\t? PERCENT\n\t\t\t: (body.keypresses.correct / keypresses) * PERCENT;\n\tif (Math.abs(expectedAccuracy - body.accuracy) > ACCURACY_TOLERANCE) {\n\t\tthrow badRequest(\"Reported accuracy does not match the keypresses\");\n\t}\n\tconst typedTotal =\n\t\tbody.chars.correct +\n\t\tbody.chars.incorrect +\n\t\tbody.chars.missed +\n\t\tbody.chars.skipped +\n\t\tbody.chars.newlines;\n\tif (typedTotal > snippetCharCount) {\n\t\tthrow badRequest(\"Reported characters exceed the snippet length\");\n\t}\n\tif (\n\t\tbody.chars.correct + body.chars.skipped + body.chars.newlines <\n\t\tsnippetCharCount * 0.5\n\t) {\n\t\tthrow badRequest(\"Too few correct characters for a completed test\");\n\t}\n}",
+          "note": "Lines 27-36 recompute wpm and raw with the engine's own formula; lines 45-59 compare against the snippet length."
+        },
+        {
+          "file": "packages/shared/src/api.ts",
+          "lang": "ts",
+          "lines": "4-12",
+          "snippet": "/** Hard sanity caps used by the server to reject impossible results. */\nexport const MAX_WPM = 400;\nexport const MAX_RESULT_CHART_POINTS = 3600;\nexport const MIN_RESULT_DURATION_MS = 1000;\nexport const MIN_LEADERBOARD_ACCURACY = 80;\nexport const USERNAME_MIN = 3;\nexport const USERNAME_MAX = 20;\nexport const USERNAME_REGEX = /^[a-zA-Z0-9_.-]+$/;\nexport const PASSWORD_MIN = 8;",
+          "note": "Hard sanity caps shared by client and server."
+        },
+        {
+          "file": "packages/shared/src/api.ts",
+          "lang": "ts",
+          "lines": "30-54",
+          "snippet": "export const SubmitResultSchema = z.object({\n\tsnippetId: z.number().int().positive(),\n\tdifficulty: z.enum(\n\t\tDIFFICULTIES.length ? [\"normal\", \"expert\", \"master\"] : [\"normal\"]\n\t),\n\twpm: z.number().nonnegative().max(MAX_WPM),\n\traw: z\n\t\t.number()\n\t\t.nonnegative()\n\t\t.max(MAX_WPM * 2),\n\taccuracy: z.number().min(0).max(100),\n\tconsistency: z.number().min(0).max(100),\n\tdurationMs: z.number().int().min(MIN_RESULT_DURATION_MS),\n\tchars: CharCountsSchema,\n\tkeypresses: z.object({\n\t\tcorrect: z.number().int().nonnegative(),\n\t\tincorrect: z.number().int().nonnegative(),\n\t}),\n\tchart: z.array(ChartPointSchema).max(MAX_RESULT_CHART_POINTS),\n\tstopOnError: z.enum([\"off\", \"letter\", \"line\"]),\n\tautoIndent: z.boolean(),\n\tblindMode: z.boolean(),\n\t/** Tests restarted before this one completed; feeds the \"tests started\" stat. */\n\trestartCount: z.number().int().nonnegative().default(0),\n});",
+          "note": "The result body carries counts and keypresses so the math can be checked, not just the final numbers."
+        },
+        {
+          "file": "apps/server/src/lib/results-service.ts",
+          "lang": "ts",
+          "lines": "160-163",
+          "snippet": "\t\tlet isLanguageBest = false;\n\t\tlet leaderboardRank: number | null = null;\n\t\tconst eligible =\n\t\t\tbody.accuracy >= MIN_LEADERBOARD_ACCURACY && !body.blindMode;",
+          "note": "Eligibility for the leaderboard is decided here, after the math check."
+        },
+        {
+          "file": "apps/server/test/results-service.test.ts",
+          "lang": "ts",
+          "lines": "40-50",
+          "snippet": "\ttest(\"rejects wpm that does not match the character counts\", () => {\n\t\texpect(() =>\n\t\t\tvalidateResultMath(result({ wpm: 120 }), SNIPPET_CHARS)\n\t\t).toThrow(\"wpm does not match\");\n\t});\n\n\ttest(\"rejects raw wpm that does not match the character counts\", () => {\n\t\texpect(() =>\n\t\t\tvalidateResultMath(result({ raw: 10 }), SNIPPET_CHARS)\n\t\t).toThrow(\"raw wpm does not match\");\n\t});",
+          "note": "The tests pin the behaviour: a wpm that does not match the counts is a 400."
+        }
+      ],
+      "related": [
+        "state-management/typing-engine/stats",
+        "database/result-transaction",
+        "security/input-validation"
+      ],
+      "custom": false
+    },
+    {
+      "id": "security/input-validation",
+      "title": "Parse every query and body before trusting it",
+      "summary": "Request bodies and query strings go through Zod schemas; bad input becomes a 400 with details, never a crash deep in a database call.",
+      "explanation": "**What problem it solves.** A handler that reads `?language=` and passes it to SQL assumes the client is honest. Clients are not: unknown languages, negative pages, non-numeric ids and oversized page sizes should be refused at the door with a clear message.\n\n**How it works here.** `parseOrThrow` in `apps/server/src/lib/validate.ts` is a four-line helper: `safeParse`, and on failure throw `badRequest(\"Invalid request\", issues)` so the central error handler turns it into a 400 that includes the Zod issues. Every route uses it on `c.req.query()` or the JSON body. The schemas live in `packages/shared/src/api.ts`: `RandomSnippetQuerySchema` restricts `language` to the catalog's enum and coerces `exclude` to an integer, `LeaderboardQuerySchema` caps `pageSize` at 100 and defaults the period. Path params get explicit checks, for example `Number.isInteger` on a snippet id. User settings are the one exception: `parseConfig` in `packages/shared/src/config.ts` repairs a config key by key instead of rejecting it, because a stale setting from an old version should not lock someone out of their preferences.\n\n**What breaks without it.** `page=-1` or `pageSize=100000` would hit Postgres unchecked, and an invalid snippet id would surface as a database error with a 500.\n\n**Why this choice.** Zod schemas double as TypeScript types, so the code after `parseOrThrow` is fully typed with no extra declarations.",
+      "code": [
+        {
+          "file": "apps/server/src/lib/validate.ts",
+          "lang": "ts",
+          "lines": "4-13",
+          "snippet": "export function parseOrThrow<T extends z.ZodType>(\n\tschema: T,\n\tvalue: unknown\n): z.infer<T> {\n\tconst result = schema.safeParse(value);\n\tif (!result.success) {\n\t\tthrow badRequest(\"Invalid request\", result.error.issues);\n\t}\n\treturn result.data;\n}",
+          "note": "The whole validation helper; the issues array ends up in the 400 response's details."
+        },
+        {
+          "file": "packages/shared/src/api.ts",
+          "lang": "ts",
+          "lines": "74-97",
+          "snippet": "export const LeaderboardQuerySchema = z.object({\n\tlanguage: z.enum(LANGUAGE_IDS as [string, ...string[]]).default(\"python\"),\n\tperiod: z.enum([\"all-time\", \"daily\"]).default(\"all-time\"),\n\talgorithm: z.string().optional(),\n\tpage: z.coerce.number().int().min(0).default(0),\n\tpageSize: z.coerce.number().int().min(1).max(100).default(50),\n});\n\nexport type LeaderboardQuery = z.infer<typeof LeaderboardQuerySchema>;\n\nexport const ResultsQuerySchema = z.object({\n\tpage: z.coerce.number().int().min(0).default(0),\n\tpageSize: z.coerce.number().int().min(1).max(100).default(25),\n\tlanguage: z.string().optional(),\n\talgorithm: z.string().optional(),\n});\n\nexport const RandomSnippetQuerySchema = z.object({\n\tlanguage: z.enum(LANGUAGE_IDS as [string, ...string[]]).default(\"python\"),\n\tcategory: z.string().default(\"all\"),\n\talgorithm: z.string().default(\"random\"),\n\t/** Exclude a snippet id so \"next test\" never repeats the previous one. */\n\texclude: z.coerce.number().int().optional(),\n});",
+          "note": "Query schemas with defaults, enums from the catalog, and a hard cap on page size."
+        },
+        {
+          "file": "apps/server/src/routes/content.ts",
+          "lang": "ts",
+          "lines": "71-86",
+          "snippet": "content.get(\"/snippets/random\", async (c) => {\n\tconst query = parseOrThrow(RandomSnippetQuerySchema, c.req.query());\n\tconst db = getDB();\n\n\tconst conditions = [\n\t\teq(snippets.enabled, true),\n\t\teq(snippets.languageId, query.language),\n\t];\n\tif (query.algorithm !== \"random\") {\n\t\tconditions.push(eq(snippets.algorithmSlug, query.algorithm));\n\t} else if (query.category !== \"all\") {\n\t\tconditions.push(eq(algorithms.category, query.category));\n\t}\n\tif (query.exclude !== undefined && query.algorithm === \"random\") {\n\t\tconditions.push(ne(snippets.id, query.exclude));\n\t}",
+          "note": "Line 72 validates the query; lines 79-86 build the SQL conditions only from parsed values."
+        },
+        {
+          "file": "packages/shared/src/config.ts",
+          "lang": "ts",
+          "lines": "75-94",
+          "snippet": "/** Parse an unknown value into a config, falling back to defaults per key. */\nexport function parseConfig(value: unknown): UserConfig {\n\tconst result = UserConfigSchema.safeParse(value);\n\tif (result.success) {\n\t\treturn result.data;\n\t}\n\tif (typeof value !== \"object\" || value === null) {\n\t\treturn { ...DEFAULT_CONFIG };\n\t}\n\tconst partial: Record<string, unknown> = {};\n\tconst shape = UserConfigSchema.shape;\n\tfor (const [key, schema] of Object.entries(shape)) {\n\t\tconst candidate = (value as Record<string, unknown>)[key];\n\t\tconst parsed = schema.safeParse(candidate);\n\t\tpartial[key] = parsed.success\n\t\t\t? parsed.data\n\t\t\t: DEFAULT_CONFIG[key as keyof UserConfig];\n\t}\n\treturn partial as UserConfig;\n}",
+          "note": "Settings are repaired per key rather than rejected, so an outdated saved config still loads."
+        }
+      ],
+      "related": [
+        "security/server-side-result-validation",
+        "api-design/shared-contracts",
+        "communication/rest-json-api"
+      ],
+      "custom": false
+    },
+    {
+      "id": "security/validated-env",
+      "title": "Validated environment, no secrets in code",
+      "summary": "The server refuses to start unless every required env value is present and well-formed; optional integrations switch off cleanly when theirs are missing.",
+      "explanation": "**What problem it solves.** A missing `DATABASE_URL` or a short auth secret should fail loudly at boot, not as a confusing error on the first request an hour later. And nothing sensitive should ever be written into source.\n\n**How it works here.** `packages/env/src/server.ts` uses `@t3-oss/env-core` with a Zod schema. `DATABASE_URL` must be set, `BETTER_AUTH_SECRET` must be at least 32 characters, `BETTER_AUTH_URL` must be a real URL, and `PORT` is coerced to a positive integer with a default. `emptyStringAsUndefined` means a blank `GITHUB_CLIENT_ID=` in a compose file counts as absent, which is what lets the auth package skip providers that are not configured and the mailer log emails instead of sending them. Booleans like `SEED_ON_START` are parsed from the strings `\"true\"`/`\"false\"` into real booleans once, here, so the rest of the code never compares strings. The web app has its own schema in `packages/env/src/web.ts` with only `VITE_`-prefixed values, because anything in the browser bundle is public. Secrets are supplied by the Dockerfile's env defaults and the deploy platform, never committed.\n\n**What breaks without it.** A typo in an env name would silently become `undefined`, and a weak secret would make session cookies forgeable.\n\n**Why this choice.** One typed `env` object means every package imports validated values instead of reading `process.env` and guessing.",
+      "code": [
+        {
+          "file": "packages/env/src/server.ts",
+          "lang": "ts",
+          "lines": "5-44",
+          "snippet": "const MIN_SECRET_LENGTH = 32;\n\nconst optionalString = z.string().min(1).optional();\n\nexport const env = createEnv({\n\tserver: {\n\t\tNODE_ENV: z\n\t\t\t.enum([\"development\", \"test\", \"production\"])\n\t\t\t.default(\"development\"),\n\t\tPORT: z.coerce.number().int().positive().default(9797),\n\t\tDATABASE_URL: z.string().min(1),\n\t\tBETTER_AUTH_SECRET: z.string().min(MIN_SECRET_LENGTH),\n\t\t/** Public URL of the API (same as the site URL in single-container deploys). */\n\t\tBETTER_AUTH_URL: z.url(),\n\t\t/** Web origin allowed to call the API. Omit when the API serves the web build. */\n\t\tCORS_ORIGIN: z.url().optional(),\n\t\t/** Absolute path of the built web app to serve statically (production). */\n\t\tWEB_DIST_DIR: optionalString,\n\t\t/** Seed algorithms + explanations into the database on boot. */\n\t\tSEED_ON_START: z\n\t\t\t.enum([\"true\", \"false\"])\n\t\t\t.default(\"true\")\n\t\t\t.transform((v) => v === \"true\"),\n\t\tRUN_MIGRATIONS_ON_START: z\n\t\t\t.enum([\"true\", \"false\"])\n\t\t\t.default(\"true\")\n\t\t\t.transform((v) => v === \"true\"),\n\t\tGITHUB_CLIENT_ID: optionalString,\n\t\tGITHUB_CLIENT_SECRET: optionalString,\n\t\tGOOGLE_CLIENT_ID: optionalString,\n\t\tGOOGLE_CLIENT_SECRET: optionalString,\n\t\tSMTP_HOST: optionalString,\n\t\tSMTP_PORT: z.coerce.number().int().positive().optional(),\n\t\tSMTP_USER: optionalString,\n\t\tSMTP_PASS: optionalString,\n\t\tSMTP_FROM: optionalString,\n\t},\n\truntimeEnv: process.env,\n\temptyStringAsUndefined: true,\n});",
+          "note": "Line 16 enforces a minimum secret length; lines 24-31 turn string flags into booleans once."
+        },
+        {
+          "file": "packages/env/src/web.ts",
+          "lang": "ts",
+          "lines": "4-15",
+          "snippet": "export const env = createEnv({\n\tclientPrefix: \"VITE_\",\n\tclient: {\n\t\t/**\n\t\t * Base URL of the API. Leave empty in production when the API serves the\n\t\t * web build from the same origin.\n\t\t */\n\t\tVITE_SERVER_URL: z.url().optional(),\n\t},\n\truntimeEnv: import.meta.env,\n\temptyStringAsUndefined: true,\n});",
+          "note": "Only VITE_-prefixed values reach the browser; the API URL is optional because production is same-origin."
+        },
+        {
+          "file": "Dockerfile",
+          "lang": "dockerfile",
+          "lines": "35-40",
+          "snippet": "FROM base AS runtime\nENV NODE_ENV=production \\\n    PORT=3000 \\\n    WEB_DIST_DIR=/app/apps/web/dist \\\n    RUN_MIGRATIONS_ON_START=true \\\n    SEED_ON_START=true",
+          "note": "Non-secret defaults are baked into the image; secrets come from the platform at run time."
+        }
+      ],
+      "related": [
+        "auth/better-auth",
+        "devops/docker-image",
+        "networking/same-origin-deploy"
+      ],
+      "custom": false
+    },
+    {
+      "id": "rate-limiting/fixed-window-limiters",
+      "title": "Three in-memory fixed-window limiters",
+      "summary": "Counters per IP (or per user) reset every window; sign-in attempts and result submissions get tighter limits than the rest of the API.",
+      "explanation": "**What problem it solves.** A single script could hammer the random-snippet endpoint, brute-force passwords, or spam fake results. Each needs a different ceiling: the whole API can be generous, sign-in must be strict, and result submissions should be counted per account rather than per network.\n\n**How it works here.** `RateLimiter` in `apps/server/src/lib/rate-limit.ts` keeps a `Map` of key to `{count, resetAt}`. `hit()` starts a new bucket when the old one has expired and reports `allowed` and `remaining`; a sweep every 60 seconds deletes stale buckets so memory does not grow forever. `rateLimit()` wraps it as Hono middleware that sets the standard `RateLimit-*` headers and answers 429 with `Retry-After` when exceeded. Three instances are mounted in `apps/server/src/app.ts`: `apiLimiter` (600 per minute per IP) on everything, `authLimiter` (30 per 15 minutes) on `POST /api/auth/*` only, and `resultsLimiter` (30 per minute) keyed by user id when signed in. Because it is mounted after `sessionMiddleware`, the user id is already on the context. `clientIp` honours `X-Forwarded-For` because the container sits behind Traefik.\n\n**What breaks without it.** Password guessing would be free, and one person could flood the results table.\n\n**Why this choice.** The app runs as one container, so a shared store like Redis would be extra infrastructure for no gain; the trade-off, stated in the file, is that limits reset on restart.",
+      "code": [
+        {
+          "file": "apps/server/src/lib/rate-limit.ts",
+          "lang": "ts",
+          "lines": "30-57",
+          "snippet": "export class RateLimiter {\n\tprivate readonly buckets = new Map<string, Bucket>();\n\tprivate lastSweep = 0;\n\n\tconstructor(\n\t\tprivate readonly windowMs: number,\n\t\tprivate readonly max: number\n\t) {}\n\n\t/** Records a hit and reports whether the key is still within its limit. */\n\thit(\n\t\tkey: string,\n\t\tnow = Date.now()\n\t): { allowed: boolean; remaining: number; resetAt: number } {\n\t\tthis.sweep(now);\n\t\tconst existing = this.buckets.get(key);\n\t\tconst bucket =\n\t\t\texisting && existing.resetAt > now\n\t\t\t\t? existing\n\t\t\t\t: { count: 0, resetAt: now + this.windowMs };\n\t\tbucket.count += 1;\n\t\tthis.buckets.set(key, bucket);\n\t\treturn {\n\t\t\tallowed: bucket.count <= this.max,\n\t\t\tremaining: Math.max(0, this.max - bucket.count),\n\t\t\tresetAt: bucket.resetAt,\n\t\t};\n\t}",
+          "note": "Line 47 reuses a bucket only while it is still inside its window; otherwise a fresh one starts."
+        },
+        {
+          "file": "apps/server/src/lib/rate-limit.ts",
+          "lang": "ts",
+          "lines": "80-100",
+          "snippet": "const trustProxy = process.env.TRUST_PROXY !== \"false\";\n\n/** Client IP, honouring the reverse proxy header when `TRUST_PROXY` is not \"false\". */\nexport function clientIp(c: Context): string {\n\tif (trustProxy) {\n\t\tconst forwarded = c.req.header(\"x-forwarded-for\");\n\t\tconst first = forwarded?.split(\",\")[0]?.trim();\n\t\tif (first) {\n\t\t\treturn first;\n\t\t}\n\t\tconst real = c.req.header(\"x-real-ip\");\n\t\tif (real) {\n\t\t\treturn real;\n\t\t}\n\t}\n\ttry {\n\t\treturn getConnInfo(c).remote.address ?? \"unknown\";\n\t} catch {\n\t\treturn \"unknown\";\n\t}\n}",
+          "note": "The proxy header is trusted unless TRUST_PROXY is explicitly false, which is right behind Traefik but wrong when exposed directly."
+        },
+        {
+          "file": "apps/server/src/lib/rate-limit.ts",
+          "lang": "ts",
+          "lines": "115-129",
+          "snippet": "\t\t\tc.header(\"RateLimit-Limit\", String(options.max));\n\t\t\tc.header(\"RateLimit-Remaining\", String(result.remaining));\n\t\t\tc.header(\"RateLimit-Reset\", String(resetSeconds));\n\t\t\tif (!result.allowed) {\n\t\t\t\tc.header(\"Retry-After\", String(resetSeconds));\n\t\t\t\treturn c.json(\n\t\t\t\t\t{\n\t\t\t\t\t\terror: {\n\t\t\t\t\t\t\tcode: \"RATE_LIMITED\",\n\t\t\t\t\t\t\tmessage: `Too many requests, try again in ${resetSeconds}s`,\n\t\t\t\t\t\t},\n\t\t\t\t\t},\n\t\t\t\t\t429\n\t\t\t\t);\n\t\t\t}",
+          "note": "Standard RateLimit-* headers on every response and Retry-After on a 429."
+        },
+        {
+          "file": "apps/server/src/lib/rate-limit.ts",
+          "lang": "ts",
+          "lines": "137-159",
+          "snippet": "const MINUTE = 60_000;\n\n/** Generic safety net for the whole API, per IP. */\nexport const apiLimiter = rateLimit({\n\tname: \"api\",\n\twindowMs: MINUTE,\n\tmax: 600,\n});\n\n/** Sign-in, sign-up, password and account changes, per IP. */\nexport const authLimiter = rateLimit({\n\tname: \"auth\",\n\twindowMs: 15 * MINUTE,\n\tmax: 30,\n});\n\n/** Result submissions, per user when signed in, otherwise per IP. */\nexport const resultsLimiter = rateLimit({\n\tname: \"results\",\n\twindowMs: MINUTE,\n\tmax: 30,\n\tkeyFor: (c) => c.get(\"user\")?.id ?? clientIp(c),\n});",
+          "note": "Three ceilings; line 158 keys result submissions by user id, falling back to IP."
+        },
+        {
+          "file": "apps/server/src/app.ts",
+          "lang": "ts",
+          "lines": "41-47",
+          "snippet": "app.use(\"/api/*\", apiLimiter);\n// Mutating auth calls (sign-in, sign-up, password reset, account changes).\napp.post(\"/api/auth/*\", authLimiter);\napp.on([\"POST\", \"GET\"], \"/api/auth/*\", (c) => getAuth().handler(c.req.raw));\n\napp.use(\"/api/*\", sessionMiddleware);\napp.post(\"/api/v1/results\", resultsLimiter);",
+          "note": "Mount order: the general limiter first, auth limiter on auth POSTs, results limiter after the session is known."
+        }
+      ],
+      "related": [
+        "auth/optional-session-middleware",
+        "security/server-side-result-validation",
+        "system-design/bootstrap-and-shutdown"
+      ],
+      "custom": false
+    },
+    {
+      "id": "state-management/typing-engine",
+      "title": "The typing engine is a pure state machine",
+      "summary": "One function builds the test state from a snippet and one function applies a key event and returns a new state; no DOM, no timers, no side effects.",
+      "explanation": "**What problem it solves.** Typing tests are fiddly: indentation, backspacing across lines, difficulty modes, timing, and stats all interact. If that logic lives inside React components it becomes untestable and the server cannot reuse it to check results.\n\n**How it works here.** `packages/typing-engine` has no dependencies. `createTest(text, config)` normalises the snippet (CRLF to LF, tabs to four spaces) and splits it into `LineState` objects. `applyKey(state, event)` takes a `KeyEvent` (`char`, `enter`, `tab`, `backspace`) with a timestamp and returns a brand new `TestState`; when nothing changes it returns the same object, which the UI uses to skip re-renders. The first scored key sets `startedAt`, every key appends to `keyLog`, and status moves `idle` to `running` to `finished` or `failed`. The web app's `useTestStore.dispatch` is a two-line wrapper around `applyKey`. The server imports the same package for `wpmFromChars`, so the formula that validates a result is literally the one that produced it.\n\n**What breaks without it.** Every rule would be duplicated between the browser, the tests and the server, and a bug in backspace handling would be impossible to reproduce without a browser.\n\n**Why this choice.** Pure functions with explicit timestamps make the engine deterministic: tests feed fake times and get exact wpm values.",
+      "code": [
+        {
+          "file": "packages/typing-engine/src/types.ts",
+          "lang": "ts",
+          "lines": "1-7",
+          "snippet": "/**\n * Core types for the typing engine.\n *\n * The engine is a pure state machine: `createTest` builds the initial state\n * from a snippet and `applyKey` returns a new state for every key event. The\n * UI only renders the state and the server re-validates the derived stats.\n */",
+          "note": "The design statement: the UI renders the state, the server re-validates the derived stats."
+        },
+        {
+          "file": "packages/typing-engine/src/engine.ts",
+          "lang": "ts",
+          "lines": "35-56",
+          "snippet": "export function createTest(\n\ttext: string,\n\tconfig: Partial<EngineConfig> = {}\n): TestState {\n\tconst merged: EngineConfig = { ...DEFAULT_ENGINE_CONFIG, ...config };\n\tconst normalized = normalizeText(text);\n\tconst lines = normalized\n\t\t.split(\"\\n\")\n\t\t.map((expected) => createLine(expected, merged.autoIndent));\n\treturn {\n\t\tconfig: merged,\n\t\ttext: normalized,\n\t\tlines,\n\t\tlineIndex: 0,\n\t\tstatus: \"idle\",\n\t\tstartedAt: null,\n\t\tfinishedAt: null,\n\t\tfailReason: null,\n\t\tkeyLog: [],\n\t\tkeypresses: { correct: 0, incorrect: 0 },\n\t};\n}",
+          "note": "createTest normalises the text and builds one LineState per line; nothing has started yet."
+        },
+        {
+          "file": "packages/typing-engine/src/engine.ts",
+          "lang": "ts",
+          "lines": "235-251",
+          "snippet": "export function applyKey(state: TestState, event: KeyEvent): TestState {\n\tif (state.status === \"finished\" || state.status === \"failed\") {\n\t\treturn state;\n\t}\n\tswitch (event.type) {\n\t\tcase \"char\":\n\t\t\treturn applyChar(state, event.char, event.time);\n\t\tcase \"enter\":\n\t\t\treturn applyEnter(state, event.time);\n\t\tcase \"tab\":\n\t\t\treturn applyTab(state, event.time);\n\t\tcase \"backspace\":\n\t\t\treturn applyBackspace(state, event.word, event.time);\n\t\tdefault:\n\t\t\treturn state;\n\t}\n}",
+          "note": "applyKey is the single entry point; finished or failed states ignore further input."
+        },
+        {
+          "file": "packages/typing-engine/src/types.ts",
+          "lang": "ts",
+          "lines": "73-88",
+          "snippet": "export type TestStatus = \"idle\" | \"running\" | \"finished\" | \"failed\";\n\nexport interface TestState {\n\tconfig: EngineConfig;\n\ttext: string;\n\tlines: LineState[];\n\tlineIndex: number;\n\tstatus: TestStatus;\n\t/** Timestamp of the first scored keypress, or null before the test starts. */\n\tstartedAt: number | null;\n\tfinishedAt: number | null;\n\tfailReason: string | null;\n\tkeyLog: KeyLogEntry[];\n\t/** Counters that are updated on every keypress. */\n\tkeypresses: { correct: number; incorrect: number };\n}",
+          "note": "The whole test state. startedAt is set by the first scored key, not by loading the page."
+        },
+        {
+          "file": "apps/web/src/store/test-store.ts",
+          "lang": "ts",
+          "lines": "80-90",
+          "snippet": "\tdispatch: (event) => {\n\t\tconst current = get().test;\n\t\tif (!current) {\n\t\t\treturn null;\n\t\t}\n\t\tconst next = applyKey(current, event);\n\t\tif (next !== current) {\n\t\t\tset({ test: next });\n\t\t}\n\t\treturn next;\n\t},",
+          "note": "The store only stores what applyKey returns; line 86 skips a set when the state is unchanged."
+        }
+      ],
+      "related": [
+        "state-management/typing-engine/line-progress",
+        "state-management/typing-engine/difficulty-modes",
+        "state-management/typing-engine/stats",
+        "state-management/zustand-stores",
+        "testing/engine-unit-tests"
+      ],
+      "custom": false
+    },
+    {
+      "id": "state-management/typing-engine/line-progress",
+      "title": "Lines, auto indent and backspacing across lines",
+      "summary": "Enter submits a line, leading indentation is pre-filled and never scored, and backspace can only re-open a previous line that still has mistakes.",
+      "explanation": "**What problem it solves.** Code is not prose. Monkeytype advances word by word; here the unit is a line, and nobody wants to type sixteen spaces of indentation to prove they can code. The engine needs rules for what Enter does, what counts, and how far back you may go.\n\n**How it works here.** `createLine` in `packages/typing-engine/src/engine.ts` pre-fills the line's leading spaces when `autoIndent` is on and records how many in `skipped`; stats later ignore those characters, so auto indent can never inflate speed. `applyEnter` refuses to leave a non-blank line until something was typed, refuses an incorrect line in stop-on-error `line` mode, fails the run in `expert`, and otherwise marks the line `submitted` and moves `lineIndex` forward. `applyBackspace` deletes within the line down to the skipped indent; at the start of a line it may re-open the previous one, but only if that line was wrong or `freedomMode` is on, and `confidenceMode` can forbid it entirely. `applyTab` types one indent unit of spaces only where spaces are expected, so Tab is useful when auto indent is off.\n\n**What breaks without it.** Users would type indentation for speed, or be unable to fix a typo on the previous line, or get stuck on blank lines.\n\n**Why this choice.** Treating the line as the unit matches how people read code and makes the mental model of the result screen (`lines` count) obvious.",
+      "code": [
+        {
+          "file": "packages/typing-engine/src/engine.ts",
+          "lang": "ts",
+          "lines": "26-33",
+          "snippet": "function leadingIndent(expected: string): string {\n\treturn LEADING_WHITESPACE.exec(expected)?.[0] ?? \"\";\n}\n\nfunction createLine(expected: string, autoIndent: boolean): LineState {\n\tconst indent = autoIndent ? leadingIndent(expected) : \"\";\n\treturn { expected, typed: indent, skipped: indent.length, submitted: false };\n}",
+          "note": "The indent is placed into typed and its length stored as skipped so it can be excluded from every count."
+        },
+        {
+          "file": "packages/typing-engine/src/engine.ts",
+          "lang": "ts",
+          "lines": "141-169",
+          "snippet": "function applyEnter(state: TestState, time: number): TestState {\n\tconst line = state.lines[state.lineIndex];\n\tif (!line) {\n\t\treturn state;\n\t}\n\tconst isLast = state.lineIndex === state.lines.length - 1;\n\tif (isLast) {\n\t\treturn state;\n\t}\n\tconst nothingTyped = line.typed.length === line.skipped;\n\tif (nothingTyped && line.expected.trim() !== \"\") {\n\t\treturn state;\n\t}\n\tconst correct = line.typed === line.expected;\n\tif (!correct && state.config.stopOnError === \"line\") {\n\t\treturn withKeypress(state, time, false);\n\t}\n\tif (!correct && state.config.difficulty === \"expert\") {\n\t\treturn fail(\n\t\t\twithKeypress(state, time, false),\n\t\t\ttime,\n\t\t\t\"expert mode: incorrect line\"\n\t\t);\n\t}\n\tconst next = withKeypress(state, time, correct);\n\tconst submitted: LineState = { ...line, submitted: true };\n\tconst lines = replaceLine(next.lines, next.lineIndex, submitted);\n\treturn { ...next, lines, lineIndex: next.lineIndex + 1 };\n}",
+          "note": "Enter rules in order: last line, nothing typed, stop-on-error line, expert failure, then submit."
+        },
+        {
+          "file": "packages/typing-engine/src/engine.ts",
+          "lang": "ts",
+          "lines": "194-233",
+          "snippet": "function applyBackspace(\n\tstate: TestState,\n\tword: boolean,\n\ttime: number\n): TestState {\n\tif (state.config.confidenceMode === \"max\") {\n\t\treturn state;\n\t}\n\tconst line = state.lines[state.lineIndex];\n\tif (!line) {\n\t\treturn state;\n\t}\n\tif (line.typed.length > line.skipped) {\n\t\tconst end = word\n\t\t\t? wordBoundary(line.typed, line.skipped)\n\t\t\t: line.typed.length - 1;\n\t\tconst updated: LineState = { ...line, typed: line.typed.slice(0, end) };\n\t\tconst next = withKeypress(state, time, true, true);\n\t\treturn { ...next, lines: replaceLine(next.lines, next.lineIndex, updated) };\n\t}\n\tif (state.lineIndex === 0 || state.config.confidenceMode === \"on\") {\n\t\treturn state;\n\t}\n\tconst previous = state.lines[state.lineIndex - 1];\n\tif (!previous) {\n\t\treturn state;\n\t}\n\tconst canReturn =\n\t\tstate.config.freedomMode || previous.typed !== previous.expected;\n\tif (!canReturn) {\n\t\treturn state;\n\t}\n\tconst reopened: LineState = { ...previous, submitted: false };\n\tconst next = withKeypress(state, time, true, true);\n\treturn {\n\t\t...next,\n\t\tlines: replaceLine(next.lines, next.lineIndex - 1, reopened),\n\t\tlineIndex: next.lineIndex - 1,\n\t};\n}",
+          "note": "Line 206 keeps backspace above the indent; lines 221-222 decide whether a previous line may be re-opened."
+        },
+        {
+          "file": "packages/typing-engine/src/engine.ts",
+          "lang": "ts",
+          "lines": "171-181",
+          "snippet": "function applyTab(state: TestState, time: number): TestState {\n\tlet next = state;\n\tfor (let i = 0; i < state.config.indentSize; i++) {\n\t\tconst line = next.lines[next.lineIndex];\n\t\tif (!line || line.expected[line.typed.length] !== \" \") {\n\t\t\tbreak;\n\t\t}\n\t\tnext = applyChar(next, \" \", time);\n\t}\n\treturn next;\n}",
+          "note": "Tab is translated into space characters, each scored like a normal key."
+        }
+      ],
+      "related": [
+        "state-management/typing-engine",
+        "state-management/typing-engine/stats",
+        "ui-components/typing-area"
+      ],
+      "custom": false
+    },
+    {
+      "id": "state-management/typing-engine/difficulty-modes",
+      "title": "Normal, expert and master, plus stop-on-error",
+      "summary": "Expert fails the run on a wrong line, master on a single wrong key; stop-on-error blocks the caret instead of failing.",
+      "explanation": "**What problem it solves.** A typing test gets boring once you can finish it. Difficulty modes add stakes without changing the snippet: the same algorithm, but one slip ends the run.\n\n**How it works here.** `EngineConfig` in `packages/typing-engine/src/types.ts` carries `difficulty` and `stopOnError`, both copied from the user's settings when a test begins. In `applyChar`, a wrong key under `master` records the keypress and switches status to `failed` with a reason. In `applyEnter`, submitting an incorrect line under `expert` does the same. `stopOnError` is gentler: `letter` records the mistake but does not advance the caret, `line` refuses Enter until the line matches. These are independent axes, so expert with stop-on-error `letter` is a valid combination. The web side reacts in `apps/web/src/hooks/use-typing-test.ts`: when `test.status` becomes `failed` it shows the reason as a toast and restarts the same snippet 800 ms later. Each saved result records which difficulty it was typed on, and personal bests store it too.\n\n**What breaks without it.** Only one difficulty would exist and the result rows could not distinguish a master run from a normal one.\n\n**Why this choice.** Encoding the modes in the pure engine means a failed run is a state transition, not a UI special case, and it can be tested with two lines.",
+      "code": [
+        {
+          "file": "packages/typing-engine/src/types.ts",
+          "lang": "ts",
+          "lines": "9-29",
+          "snippet": "export type StopOnError = \"off\" | \"letter\" | \"line\";\nexport type Difficulty = \"normal\" | \"expert\" | \"master\";\nexport type ConfidenceMode = \"off\" | \"on\" | \"max\";\n\nexport interface EngineConfig {\n\t/** Stop the caret from advancing past an incorrect letter / line. */\n\tstopOnError: StopOnError;\n\t/** `expert` fails on an incorrect line, `master` fails on any wrong key. */\n\tdifficulty: Difficulty;\n\t/**\n\t * Skip leading indentation when moving to a new line. Skipped characters are\n\t * not counted toward speed, so this never inflates results.\n\t */\n\tautoIndent: boolean;\n\t/** Allow backspacing into lines that were already submitted correctly. */\n\tfreedomMode: boolean;\n\t/** `on` disables backspacing into previous lines, `max` disables backspace. */\n\tconfidenceMode: ConfidenceMode;\n\t/** Treat the Tab key as typing one indent unit of spaces. */\n\tindentSize: number;\n}",
+          "note": "The three mode axes and what each value means."
+        },
+        {
+          "file": "packages/typing-engine/src/engine.ts",
+          "lang": "ts",
+          "lines": "96-139",
+          "snippet": "function applyChar(state: TestState, char: string, time: number): TestState {\n\tconst line = state.lines[state.lineIndex];\n\tif (!line) {\n\t\treturn state;\n\t}\n\tconst position = line.typed.length;\n\tconst expected = line.expected[position];\n\tconst ok = expected !== undefined && char === expected;\n\tconst isLast = state.lineIndex === state.lines.length - 1;\n\n\tif (expected === undefined) {\n\t\t// Typing beyond the end of the line.\n\t\tif (isLast || position - line.expected.length >= MAX_EXTRA_CHARS) {\n\t\t\treturn state;\n\t\t}\n\t\tif (state.config.stopOnError !== \"off\") {\n\t\t\treturn state;\n\t\t}\n\t}\n\n\tif (!ok && state.config.difficulty === \"master\") {\n\t\treturn fail(\n\t\t\twithKeypress(state, time, false),\n\t\t\ttime,\n\t\t\t\"master mode: incorrect key\"\n\t\t);\n\t}\n\n\tlet next = withKeypress(state, time, ok);\n\tif (!ok && state.config.stopOnError === \"letter\") {\n\t\treturn next;\n\t}\n\n\tconst updatedLine: LineState = { ...line, typed: line.typed + char };\n\tnext = {\n\t\t...next,\n\t\tlines: replaceLine(next.lines, next.lineIndex, updatedLine),\n\t};\n\n\tif (isLast && isLineComplete(updatedLine, next.config.stopOnError)) {\n\t\treturn { ...next, status: \"finished\", finishedAt: time };\n\t}\n\treturn next;\n}",
+          "note": "Lines 116-122 are master mode; lines 125-127 are stop-on-error letter."
+        },
+        {
+          "file": "packages/typing-engine/src/engine.ts",
+          "lang": "ts",
+          "lines": "154-164",
+          "snippet": "\tconst correct = line.typed === line.expected;\n\tif (!correct && state.config.stopOnError === \"line\") {\n\t\treturn withKeypress(state, time, false);\n\t}\n\tif (!correct && state.config.difficulty === \"expert\") {\n\t\treturn fail(\n\t\t\twithKeypress(state, time, false),\n\t\t\ttime,\n\t\t\t\"expert mode: incorrect line\"\n\t\t);\n\t}",
+          "note": "Expert mode fails on a wrong line; stop-on-error line just refuses the Enter."
+        },
+        {
+          "file": "apps/web/src/hooks/use-typing-test.ts",
+          "lang": "ts",
+          "lines": "219-227",
+          "snippet": "\t// Failed tests (expert/master) restart automatically after a short notice.\n\tuseEffect(() => {\n\t\tif (test?.status !== \"failed\") {\n\t\t\treturn;\n\t\t}\n\t\ttoast.error(test.failReason ?? \"Test failed\");\n\t\tconst timer = window.setTimeout(repeatTest, 800);\n\t\treturn () => window.clearTimeout(timer);\n\t}, [test?.status, test?.failReason, repeatTest]);",
+          "note": "A failed state is shown as a toast and the same snippet restarts shortly after."
+        },
+        {
+          "file": "apps/web/src/lib/settings.ts",
+          "lang": "ts",
+          "lines": "70-82",
+          "snippet": "\t{\n\t\tkey: \"difficulty\",\n\t\ttitle: \"test difficulty\",\n\t\tdescription:\n\t\t\t\"Normal is the classic experience. Expert fails the test when you submit an incorrect line. Master fails the test on a single incorrect key press.\",\n\t\tsection: \"behavior\",\n\t\ttype: \"enum\",\n\t\toptions: [\n\t\t\t{ value: \"normal\", label: \"normal\" },\n\t\t\t{ value: \"expert\", label: \"expert\" },\n\t\t\t{ value: \"master\", label: \"master\" },\n\t\t],\n\t},",
+          "note": "The user-facing description the settings page and command palette both render."
+        }
+      ],
+      "related": [
+        "state-management/typing-engine",
+        "state-management/typing-engine/line-progress",
+        "ui-components/command-palette"
+      ],
+      "custom": false
+    },
+    {
+      "id": "state-management/typing-engine/stats",
+      "title": "WPM, raw, accuracy and consistency",
+      "summary": "Speed counts correct characters (newlines included) divided by five per minute; accuracy is per keypress; consistency is monkeytype's kogasa score.",
+      "explanation": "**What problem it solves.** \"Words per minute\" has no natural meaning for code. The numbers need a definition that matches what players already know from monkeytype, cannot be gamed by auto indent, and can be recomputed by the server.\n\n**How it works here.** `countChars` in `packages/typing-engine/src/stats.ts` walks every line from `skipped` onward and tallies correct, incorrect, extra (typed past the end) and missed (left untyped on a submitted line); each correctly submitted newline counts as one character, the way a space does in monkeytype. `wpmFromChars` is `chars / 5` scaled to a minute. `computeStats` then defines wpm as correct plus newlines, raw as everything typed, accuracy as correct keypresses over all keypresses (so fixing a typo still costs you), and consistency as `kogasa` of the coefficient of variation of per-second raw speeds from `buildChart`. The chart buckets `keyLog` entries into seconds and is what the result graph draws. `liveWpm` reuses `countChars` every 200 ms for the live indicator.\n\n**What breaks without it.** Different screens would show different numbers, and the server could not verify a submission.\n\n**Why this choice.** Matching monkeytype's conventions means a 70 wpm here is comparable to a 70 wpm there, which is the whole appeal.",
+      "code": [
+        {
+          "file": "packages/typing-engine/src/stats.ts",
+          "lang": "ts",
+          "lines": "15-45",
+          "snippet": "export function countChars(lines: LineState[], lineIndex: number): CharCounts {\n\tconst counts: CharCounts = {\n\t\tcorrect: 0,\n\t\tincorrect: 0,\n\t\textra: 0,\n\t\tmissed: 0,\n\t\tnewlines: 0,\n\t\tskipped: 0,\n\t};\n\tlines.forEach((line, index) => {\n\t\tcounts.skipped += line.skipped;\n\t\tconst expected = line.expected;\n\t\tconst typed = line.typed;\n\t\tfor (let i = line.skipped; i < typed.length; i++) {\n\t\t\tif (i >= expected.length) {\n\t\t\t\tcounts.extra++;\n\t\t\t} else if (typed[i] === expected[i]) {\n\t\t\t\tcounts.correct++;\n\t\t\t} else {\n\t\t\t\tcounts.incorrect++;\n\t\t\t}\n\t\t}\n\t\tif (line.submitted || index < lineIndex) {\n\t\t\tcounts.missed += Math.max(0, expected.length - typed.length);\n\t\t\tif (index < lines.length - 1) {\n\t\t\t\tcounts.newlines++;\n\t\t\t}\n\t\t}\n\t});\n\treturn counts;\n}",
+          "note": "Counting starts at line.skipped, so pre-filled indentation is never scored; line 40 adds one per submitted newline."
+        },
+        {
+          "file": "packages/typing-engine/src/stats.ts",
+          "lang": "ts",
+          "lines": "52-66",
+          "snippet": "export function wpmFromChars(chars: number, durationMs: number): number {\n\tif (durationMs <= 0) {\n\t\treturn 0;\n\t}\n\treturn (chars / CHARS_PER_WORD) * (MS_PER_MINUTE / durationMs);\n}\n\n/**\n * monkeytype's consistency metric: 100 * (1 - tanh(cov + cov^3/3 + cov^5/5))\n * where cov is the coefficient of variation of the per-second raw speeds.\n */\nexport function kogasa(cov: number): number {\n\tconst value = cov + cov ** 3 / 3 + cov ** 5 / 5;\n\treturn PERCENT * (1 - Math.tanh(value));\n}",
+          "note": "Five characters per word, and the kogasa curve that maps variation to a 0-100 consistency."
+        },
+        {
+          "file": "packages/typing-engine/src/stats.ts",
+          "lang": "ts",
+          "lines": "124-149",
+          "snippet": "export function computeStats(state: TestState, now?: number): TestStats {\n\tconst start = state.startedAt;\n\tconst end = state.finishedAt ?? now ?? start ?? 0;\n\tconst durationMs = start === null ? 0 : Math.max(0, Math.round(end - start));\n\tconst chars = countChars(state.lines, state.lineIndex);\n\tconst totalKeypresses = state.keypresses.correct + state.keypresses.incorrect;\n\tconst accuracy =\n\t\ttotalKeypresses === 0\n\t\t\t? PERCENT\n\t\t\t: (state.keypresses.correct / totalKeypresses) * PERCENT;\n\tconst correctScored = chars.correct + chars.newlines;\n\tconst rawScored = correctScored + chars.incorrect + chars.extra;\n\tconst chart = buildChart(state.keyLog, durationMs);\n\tconst rawSpeeds = chart.map((p) => p.raw).filter((r) => r > 0);\n\tconst consistency = kogasa(coefficientOfVariation(rawSpeeds));\n\n\treturn {\n\t\twpm: roundTo(wpmFromChars(correctScored, durationMs), 2),\n\t\traw: roundTo(wpmFromChars(rawScored, durationMs), 2),\n\t\taccuracy: roundTo(accuracy, 2),\n\t\tconsistency: roundTo(consistency, 2),\n\t\tdurationMs,\n\t\tchars,\n\t\tchart,\n\t};\n}",
+          "note": "Line 134 is what wpm counts; line 135 is raw; accuracy comes from keypresses, not characters."
+        },
+        {
+          "file": "packages/typing-engine/src/stats.ts",
+          "lang": "ts",
+          "lines": "81-105",
+          "snippet": "export function buildChart(\n\tkeyLog: KeyLogEntry[],\n\tdurationMs: number\n): ChartPoint[] {\n\tconst seconds = Math.max(1, Math.ceil(durationMs / MS_PER_SECOND));\n\tconst perSecondChars = new Array<number>(seconds).fill(0);\n\tconst perSecondErrors = new Array<number>(seconds).fill(0);\n\tlet cumulativeCorrect = 0;\n\tconst cumulativeBySecond = new Array<number>(seconds).fill(0);\n\n\tfor (const entry of keyLog) {\n\t\tif (entry.nav) {\n\t\t\tcontinue;\n\t\t}\n\t\tconst bucket = Math.min(seconds - 1, Math.floor(entry.t / MS_PER_SECOND));\n\t\tconst current = perSecondChars[bucket] ?? 0;\n\t\tperSecondChars[bucket] = current + 1;\n\t\tif (entry.ok) {\n\t\t\tcumulativeCorrect++;\n\t\t} else {\n\t\t\tconst errors = perSecondErrors[bucket] ?? 0;\n\t\t\tperSecondErrors[bucket] = errors + 1;\n\t\t}\n\t\tcumulativeBySecond[bucket] = cumulativeCorrect;\n\t}",
+          "note": "Per-second buckets built from the key log; navigation keys are skipped."
+        },
+        {
+          "file": "apps/web/src/components/test/live-stats.tsx",
+          "lang": "tsx",
+          "lines": "31-41",
+          "snippet": "\tconst running = test.status === \"running\" && test.startedAt !== null;\n\tconst elapsed = running ? now - (test.startedAt ?? now) : 0;\n\tconst speed = running\n\t\t? Math.round(convertSpeed(liveWpm(test, now), config.typingSpeedUnit))\n\t\t: 0;\n\tconst keypresses = test.keypresses.correct + test.keypresses.incorrect;\n\tconst accuracy =\n\t\tkeypresses === 0\n\t\t\t? PERCENT\n\t\t\t: Math.round((test.keypresses.correct / keypresses) * PERCENT);\n\tconst completed = countChars(test.lines, test.lineIndex);",
+          "note": "The live indicator derives everything from the same state, nothing is tracked separately."
+        }
+      ],
+      "related": [
+        "state-management/typing-engine",
+        "security/server-side-result-validation",
+        "testing/engine-unit-tests"
+      ],
+      "custom": false
+    },
+    {
+      "id": "state-management/zustand-stores",
+      "title": "Three small Zustand stores",
+      "summary": "Test state, user settings and UI flags live in separate stores; settings persist to localStorage and are repaired on load.",
+      "explanation": "**What problem it solves.** The test page, header, live stats, command palette and result screen all need pieces of the same state, and a keystroke must not re-render the whole app. Prop drilling would be painful; one giant store would re-render everything.\n\n**How it works here.** `apps/web/src/store/test-store.ts` holds the current snippet, the engine `TestState`, the phase (`loading`, `typing`, `result`, `error`) and the restart count; `beginTest` creates the engine with the language's indent size and bumps `testId` so components can reset. `config-store.ts` wraps the settings object in `persist` under the key `typeninja-config`; its `merge` runs `parseConfig` on whatever was in localStorage, so a setting removed in a newer version falls back to its default instead of crashing. `ui-store.ts` keeps ephemeral things like whether the palette is open and which view it shows. Components subscribe with selectors (`useTestStore((s) => s.phase)`) so only what changed re-renders. Inside callbacks, `useTestStore.getState()` reads the latest value without stale closures, and a `loadToken` counter in `use-typing-test.ts` drops a slow snippet response when a newer load has started.\n\n**What breaks without it.** Rapidly pressing Tab would race two snippet loads, and a corrupt localStorage entry would white-screen the app.\n\n**Why this choice.** Zustand has no provider and works outside React, which is exactly what the keyboard handlers need.",
+      "code": [
+        {
+          "file": "apps/web/src/store/test-store.ts",
+          "lang": "ts",
+          "lines": "58-79",
+          "snippet": "export const useTestStore = create<TestStoreState>()((set, get) => ({\n\tphase: \"loading\",\n\tsnippet: null,\n\ttest: null,\n\trestartCount: 0,\n\tresult: null,\n\terrorMessage: null,\n\ttestId: 0,\n\tstartLoading: () => set({ phase: \"loading\", errorMessage: null }),\n\tsetError: (message) => set({ phase: \"error\", errorMessage: message }),\n\tbeginTest: (snippet, config) =>\n\t\tset((state) => ({\n\t\t\tphase: \"typing\",\n\t\t\tsnippet,\n\t\t\ttest: createTest(\n\t\t\t\tsnippet.code,\n\t\t\t\tengineConfig(config, snippet.language.indent)\n\t\t\t),\n\t\t\tresult: null,\n\t\t\terrorMessage: null,\n\t\t\ttestId: state.testId + 1,\n\t\t})),",
+          "note": "beginTest builds the engine with the language's indent and resets everything else in one set."
+        },
+        {
+          "file": "apps/web/src/store/config-store.ts",
+          "lang": "ts",
+          "lines": "18-52",
+          "snippet": "export const useConfigStore = create<ConfigState>()(\n\tpersist(\n\t\t(set) => ({\n\t\t\tconfig: DEFAULT_CONFIG,\n\t\t\tupdatedAt: 0,\n\t\t\tsetConfig: (key, value) =>\n\t\t\t\tset((state) => ({\n\t\t\t\t\tconfig: { ...state.config, [key]: value },\n\t\t\t\t\tupdatedAt: Date.now(),\n\t\t\t\t})),\n\t\t\treplaceConfig: (config, updatedAt) =>\n\t\t\t\tset({\n\t\t\t\t\tconfig: parseConfig(config),\n\t\t\t\t\tupdatedAt: updatedAt ?? Date.now(),\n\t\t\t\t}),\n\t\t\tresetConfig: () =>\n\t\t\t\tset({ config: { ...DEFAULT_CONFIG }, updatedAt: Date.now() }),\n\t\t}),\n\t\t{\n\t\t\tname: \"typeninja-config\",\n\t\t\tpartialize: (state) => ({\n\t\t\t\tconfig: state.config,\n\t\t\t\tupdatedAt: state.updatedAt,\n\t\t\t}),\n\t\t\tmerge: (persisted, current) => {\n\t\t\t\tconst saved = persisted as Partial<ConfigState> | undefined;\n\t\t\t\treturn {\n\t\t\t\t\t...current,\n\t\t\t\t\tconfig: parseConfig(saved?.config),\n\t\t\t\t\tupdatedAt: saved?.updatedAt ?? 0,\n\t\t\t\t};\n\t\t\t},\n\t\t}\n\t)\n);",
+          "note": "Lines 42-49: persisted settings are passed through parseConfig so unknown or invalid values are repaired."
+        },
+        {
+          "file": "apps/web/src/store/ui-store.ts",
+          "lang": "ts",
+          "lines": "20-30",
+          "snippet": "export const useUIStore = create<UIState>()((set) => ({\n\tpaletteOpen: false,\n\tpaletteView: { type: \"root\" },\n\topenPalette: (view) =>\n\t\tset({ paletteOpen: true, paletteView: view ?? { type: \"root\" } }),\n\tclosePalette: () =>\n\t\tset({ paletteOpen: false, paletteView: { type: \"root\" } }),\n\tsetPaletteView: (view) => set({ paletteView: view }),\n\texplainOpen: false,\n\tsetExplainOpen: (open) => set({ explainOpen: open }),\n}));",
+          "note": "Ephemeral UI state; nothing here is persisted."
+        },
+        {
+          "file": "apps/web/src/hooks/use-typing-test.ts",
+          "lang": "ts",
+          "lines": "32-62",
+          "snippet": "\tconst load = useCallback(\n\t\tasync (exclude?: number) => {\n\t\t\tconst store = useTestStore.getState();\n\t\t\tconst token = ++loadToken.current;\n\t\t\tstore.startLoading();\n\t\t\ttry {\n\t\t\t\tconst { snippet: next } = await fetchRandomSnippet({\n\t\t\t\t\tlanguage: config.language,\n\t\t\t\t\tcategory: config.category,\n\t\t\t\t\talgorithm: config.algorithm,\n\t\t\t\t\texclude,\n\t\t\t\t});\n\t\t\t\tif (token !== loadToken.current) {\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t\tuseTestStore\n\t\t\t\t\t.getState()\n\t\t\t\t\t.beginTest(next, useConfigStore.getState().config);\n\t\t\t} catch (error) {\n\t\t\t\tif (token !== loadToken.current) {\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t\tconst message =\n\t\t\t\t\terror instanceof ApiRequestError\n\t\t\t\t\t\t? error.message\n\t\t\t\t\t\t: \"Could not reach the server. Is the API running?\";\n\t\t\t\tuseTestStore.getState().setError(message);\n\t\t\t}\n\t\t},\n\t\t[config.language, config.category, config.algorithm]\n\t);",
+          "note": "Line 35 issues a token per load and lines 44 and 51 ignore responses from superseded loads."
+        }
+      ],
+      "related": [
+        "state-management/typing-engine",
+        "state-management/config-sync",
+        "ui-components/command-palette"
+      ],
+      "custom": false
+    },
+    {
+      "id": "state-management/config-sync",
+      "title": "Settings sync: local first, server copy for members",
+      "summary": "Everyone's settings live in localStorage; signed-in users also get a server copy, and the newer of the two wins when they meet.",
+      "explanation": "**What problem it solves.** Anonymous users need their theme and language to stick between visits. Members expect the same settings on a second device. Doing both without a flash of wrong settings or a sync loop is the tricky part.\n\n**How it works here.** The config store always writes to localStorage with an `updatedAt` timestamp. `useConfigSync` in `apps/web/src/hooks/use-config-sync.ts` runs once in the root layout. When a session appears it fetches `/users/me/config`; if the server copy is at least as new as the local one, `replaceConfig` adopts it, otherwise the local copy is pushed up. A `hydratedFor` ref remembers which user was reconciled so this runs once per sign-in, and it resets on sign-out. After that, every local change schedules a `PUT` 1.5 seconds later; typing through five settings in the palette produces one request, not five. On the server, `PUT /users/me/config` runs the body through `parseConfig` and upserts a single JSONB row per user in `user_configs`.\n\n**What breaks without it.** Settings would reset on every device, or the server would overwrite fresh local changes with stale ones on load.\n\n**Why this choice.** Last-write-wins by timestamp is simple and good enough for preferences; a conflict here costs a theme, not data. One caveat: it compares a browser clock with the server's clock.",
+      "code": [
+        {
+          "file": "apps/web/src/hooks/use-config-sync.ts",
+          "lang": "ts",
+          "lines": "13-49",
+          "snippet": "export function useConfigSync() {\n\tconst { data: session } = useSession();\n\tconst userId = session?.user.id ?? null;\n\tconst serverConfig = useQuery({\n\t\t...serverConfigQuery,\n\t\tenabled: userId !== null,\n\t});\n\tconst save = useSaveServerConfig();\n\tconst config = useConfigStore((s) => s.config);\n\tconst updatedAt = useConfigStore((s) => s.updatedAt);\n\tconst replaceConfig = useConfigStore((s) => s.replaceConfig);\n\tconst hydratedFor = useRef<string | null>(null);\n\tconst saveRef = useRef(save.mutate);\n\tsaveRef.current = save.mutate;\n\n\tuseEffect(() => {\n\t\tif (!(userId && serverConfig.isSuccess) || hydratedFor.current === userId) {\n\t\t\treturn;\n\t\t}\n\t\thydratedFor.current = userId;\n\t\tconst remote = serverConfig.data.config;\n\t\tconst remoteAt = serverConfig.data.updatedAt\n\t\t\t? new Date(serverConfig.data.updatedAt).getTime()\n\t\t\t: 0;\n\t\tif (remote && remoteAt >= updatedAt) {\n\t\t\treplaceConfig(remote, remoteAt);\n\t\t} else {\n\t\t\tsaveRef.current(config);\n\t\t}\n\t}, [\n\t\tuserId,\n\t\tserverConfig.isSuccess,\n\t\tserverConfig.data,\n\t\treplaceConfig,\n\t\tconfig,\n\t\tupdatedAt,\n\t]);",
+          "note": "Line 37 is the whole conflict rule: the newer timestamp wins; line 32 makes it run once per user."
+        },
+        {
+          "file": "apps/web/src/hooks/use-config-sync.ts",
+          "lang": "ts",
+          "lines": "51-66",
+          "snippet": "\tuseEffect(() => {\n\t\tif (!userId || hydratedFor.current !== userId || updatedAt === 0) {\n\t\t\treturn;\n\t\t}\n\t\tconst timer = window.setTimeout(\n\t\t\t() => saveRef.current(config),\n\t\t\tSYNC_DEBOUNCE_MS\n\t\t);\n\t\treturn () => window.clearTimeout(timer);\n\t}, [config, updatedAt, userId]);\n\n\tuseEffect(() => {\n\t\tif (!userId) {\n\t\t\thydratedFor.current = null;\n\t\t}\n\t}, [userId]);",
+          "note": "Debounced push of local edits, and a reset of the hydration marker on sign-out."
+        },
+        {
+          "file": "apps/server/src/routes/users.ts",
+          "lang": "ts",
+          "lines": "218-243",
+          "snippet": "usersRoute.get(\"/me/config\", requireAuth, async (c) => {\n\tconst user = requireUser(c);\n\tconst db = getDB();\n\tconst [row] = await db\n\t\t.select()\n\t\t.from(userConfigs)\n\t\t.where(eq(userConfigs.userId, user.id));\n\treturn c.json({\n\t\tconfig: row ? parseConfig(row.config) : null,\n\t\tupdatedAt: row?.updatedAt.toISOString() ?? null,\n\t});\n});\n\nusersRoute.put(\"/me/config\", requireAuth, async (c) => {\n\tconst user = requireUser(c);\n\tconst config = parseConfig(await c.req.json());\n\tconst db = getDB();\n\tawait db\n\t\t.insert(userConfigs)\n\t\t.values({ userId: user.id, config })\n\t\t.onConflictDoUpdate({\n\t\t\ttarget: userConfigs.userId,\n\t\t\tset: { config, updatedAt: new Date() },\n\t\t});\n\treturn c.json({ config });\n});",
+          "note": "GET returns the parsed row or null; PUT upserts one JSONB row per user."
+        },
+        {
+          "file": "packages/db/src/schema/typing.ts",
+          "lang": "ts",
+          "lines": "181-187",
+          "snippet": "export const userConfigs = pgTable(\"user_configs\", {\n\tuserId: text(\"user_id\")\n\t\t.primaryKey()\n\t\t.references(() => users.id, { onDelete: \"cascade\" }),\n\tconfig: jsonb(\"config\").$type<Record<string, unknown>>().notNull(),\n\tupdatedAt: timestamp(\"updated_at\").defaultNow().notNull(),\n});",
+          "note": "The whole settings object is one JSONB column keyed by user."
+        }
+      ],
+      "related": [
+        "state-management/zustand-stores",
+        "security/input-validation",
+        "communication/rest-json-api"
+      ],
+      "custom": false
+    },
+    {
+      "id": "database/drizzle-schema",
+      "title": "Schema: snippets, results and precomputed bests",
+      "summary": "Drizzle tables for content and results, with two small tables that store each user's best run so the leaderboard never scans history.",
+      "explanation": "**What problem it solves.** A leaderboard that ranks every result row gets slower with every test typed. Personal bests per algorithm and per language need to be looked up instantly on the result screen.\n\n**How it works here.** `packages/db/src/schema/typing.ts` defines the tables in TypeScript; `drizzle-kit` generates SQL migrations from it. `snippets` has a unique index on `(algorithm_slug, language_id)`, which is what the seeder's upsert targets, plus `char_count` and `content_hash` so results can be validated and unchanged content skipped. `results` keeps one row per completed test with `chars` and `chart` as JSONB (they are read as a unit, never queried by field) and copies `algorithm_slug` and `language_id` so history survives if a snippet is replaced. `personal_bests` has a composite primary key `(user, language, algorithm)` and `language_bests` has `(user, language)` with an index on `(language_id, wpm)`; the all-time leaderboard reads only that table. Every user-owned table cascades on user delete, so account deletion is one statement. Indexes on `results (user_id, created_at)` back the paginated history and the activity heatmap.\n\n**What breaks without it.** Ranking would mean `MAX(wpm) GROUP BY user` over the whole results table on every page view.\n\n**Why this choice.** Writing the best twice (in `results` and in a bests table) trades a little write complexity for constant-time reads where users look most often.",
+      "code": [
+        {
+          "file": "packages/db/src/schema/typing.ts",
+          "lang": "ts",
+          "lines": "45-69",
+          "snippet": "export const snippets = pgTable(\n\t\"snippets\",\n\t{\n\t\tid: serial(\"id\").primaryKey(),\n\t\talgorithmSlug: text(\"algorithm_slug\")\n\t\t\t.notNull()\n\t\t\t.references(() => algorithms.slug, { onDelete: \"cascade\" }),\n\t\tlanguageId: text(\"language_id\")\n\t\t\t.notNull()\n\t\t\t.references(() => languages.id, { onDelete: \"cascade\" }),\n\t\tcode: text(\"code\").notNull(),\n\t\tcharCount: integer(\"char_count\").notNull(),\n\t\tlineCount: integer(\"line_count\").notNull(),\n\t\tcontentHash: text(\"content_hash\").notNull(),\n\t\tenabled: boolean(\"enabled\").notNull().default(true),\n\t\tupdatedAt: timestamp(\"updated_at\").defaultNow().notNull(),\n\t},\n\t(table) => [\n\t\tuniqueIndex(\"snippets_algorithm_language_idx\").on(\n\t\t\ttable.algorithmSlug,\n\t\t\ttable.languageId\n\t\t),\n\t\tindex(\"snippets_language_idx\").on(table.languageId),\n\t]\n);",
+          "note": "Line 63: one snippet per algorithm per language, enforced by a unique index the seeder relies on."
+        },
+        {
+          "file": "packages/db/src/schema/typing.ts",
+          "lang": "ts",
+          "lines": "87-119",
+          "snippet": "export const results = pgTable(\n\t\"results\",\n\t{\n\t\tid: uuid(\"id\").primaryKey().defaultRandom(),\n\t\tuserId: text(\"user_id\")\n\t\t\t.notNull()\n\t\t\t.references(() => users.id, { onDelete: \"cascade\" }),\n\t\tsnippetId: integer(\"snippet_id\")\n\t\t\t.notNull()\n\t\t\t.references(() => snippets.id, { onDelete: \"cascade\" }),\n\t\talgorithmSlug: text(\"algorithm_slug\").notNull(),\n\t\tlanguageId: text(\"language_id\").notNull(),\n\t\tdifficulty: text(\"difficulty\").notNull(),\n\t\twpm: real(\"wpm\").notNull(),\n\t\traw: real(\"raw\").notNull(),\n\t\taccuracy: real(\"accuracy\").notNull(),\n\t\tconsistency: real(\"consistency\").notNull(),\n\t\tdurationMs: integer(\"duration_ms\").notNull(),\n\t\tchars: jsonb(\"chars\").$type<ResultChars>().notNull(),\n\t\tkeypressesCorrect: integer(\"keypresses_correct\").notNull(),\n\t\tkeypressesIncorrect: integer(\"keypresses_incorrect\").notNull(),\n\t\tchart: jsonb(\"chart\").$type<ResultChartPoint[]>().notNull(),\n\t\tstopOnError: text(\"stop_on_error\").notNull(),\n\t\tautoIndent: boolean(\"auto_indent\").notNull(),\n\t\tblindMode: boolean(\"blind_mode\").notNull(),\n\t\tisPersonalBest: boolean(\"is_personal_best\").notNull().default(false),\n\t\tcreatedAt: timestamp(\"created_at\").defaultNow().notNull(),\n\t},\n\t(table) => [\n\t\tindex(\"results_user_created_idx\").on(table.userId, table.createdAt),\n\t\tindex(\"results_language_created_idx\").on(table.languageId, table.createdAt),\n\t]\n);",
+          "note": "JSONB for the chart and counts; lines 116-117 are the indexes behind history and leaderboards by language."
+        },
+        {
+          "file": "packages/db/src/schema/typing.ts",
+          "lang": "ts",
+          "lines": "121-145",
+          "snippet": "/** Best run per user per language per algorithm. */\nexport const personalBests = pgTable(\n\t\"personal_bests\",\n\t{\n\t\tuserId: text(\"user_id\")\n\t\t\t.notNull()\n\t\t\t.references(() => users.id, { onDelete: \"cascade\" }),\n\t\tlanguageId: text(\"language_id\").notNull(),\n\t\talgorithmSlug: text(\"algorithm_slug\").notNull(),\n\t\tresultId: uuid(\"result_id\")\n\t\t\t.notNull()\n\t\t\t.references(() => results.id, { onDelete: \"cascade\" }),\n\t\twpm: real(\"wpm\").notNull(),\n\t\traw: real(\"raw\").notNull(),\n\t\taccuracy: real(\"accuracy\").notNull(),\n\t\tconsistency: real(\"consistency\").notNull(),\n\t\tdifficulty: text(\"difficulty\").notNull(),\n\t\tachievedAt: timestamp(\"achieved_at\").defaultNow().notNull(),\n\t},\n\t(table) => [\n\t\tprimaryKey({\n\t\t\tcolumns: [table.userId, table.languageId, table.algorithmSlug],\n\t\t}),\n\t]\n);",
+          "note": "Best run per user, language and algorithm; the composite primary key makes an upsert the natural write."
+        },
+        {
+          "file": "packages/db/src/schema/typing.ts",
+          "lang": "ts",
+          "lines": "147-169",
+          "snippet": "/** Best run per user per language; this is what the leaderboard reads. */\nexport const languageBests = pgTable(\n\t\"language_bests\",\n\t{\n\t\tuserId: text(\"user_id\")\n\t\t\t.notNull()\n\t\t\t.references(() => users.id, { onDelete: \"cascade\" }),\n\t\tlanguageId: text(\"language_id\").notNull(),\n\t\tresultId: uuid(\"result_id\")\n\t\t\t.notNull()\n\t\t\t.references(() => results.id, { onDelete: \"cascade\" }),\n\t\talgorithmSlug: text(\"algorithm_slug\").notNull(),\n\t\twpm: real(\"wpm\").notNull(),\n\t\traw: real(\"raw\").notNull(),\n\t\taccuracy: real(\"accuracy\").notNull(),\n\t\tconsistency: real(\"consistency\").notNull(),\n\t\tachievedAt: timestamp(\"achieved_at\").defaultNow().notNull(),\n\t},\n\t(table) => [\n\t\tprimaryKey({ columns: [table.userId, table.languageId] }),\n\t\tindex(\"language_bests_leaderboard_idx\").on(table.languageId, table.wpm),\n\t]\n);",
+          "note": "Best run per user and language, the table the all-time leaderboard reads; line 167 is the index it sorts on."
+        }
+      ],
+      "related": [
+        "database/result-transaction",
+        "database/leaderboard-queries",
+        "database/content-seeding"
+      ],
+      "custom": false
+    },
+    {
+      "id": "database/content-seeding",
+      "title": "Algorithm corpus as files, seeded by content hash",
+      "summary": "Every snippet and explanation is a checked-in file validated by tests; on boot the server upserts them into Postgres and only rewrites rows whose hash changed.",
+      "explanation": "**What problem it solves.** The thing people type has to be correct, idiomatic and consistent across twelve languages. Generating it at runtime would be slow and unreviewable. Hand-editing database rows would be invisible to code review. The content needs to live in git and flow into the database automatically.\n\n**How it works here.** `packages/algorithms/src/catalog.ts` is the metadata source: slug, category, difficulty, complexity. `languages.ts` lists each language with its indent unit and file extension. The files themselves sit in `content/snippets/<language>/<slug>.<ext>` and `content/explanations/<slug>.md`; `loader.ts` reads them all. `validate.ts` encodes the rules from `CONTENT.md` (64-character lines, 5 to 45 lines, spaces only, ASCII, exactly one trailing newline) and the test suite fails if any of the 31 by 12 files breaks one. On boot, `seedContent` in `packages/db/src/seed.ts` upserts languages, algorithms with their explanation markdown, and snippets. Each snippet carries a SHA-256 `contentHash`; the upsert's `setWhere` only updates rows whose hash differs, so a restart with unchanged content writes nothing and `updated_at` stays meaningful.\n\n**What breaks without it.** Adding an algorithm would mean a manual SQL insert in production, and a stray tab in a snippet would make it impossible to type correctly.\n\n**Why this choice.** Files in a package are reviewable, testable and versioned with the code that renders them; the hash makes the seed idempotent.",
+      "code": [
+        {
+          "file": "packages/algorithms/src/catalog.ts",
+          "lang": "ts",
+          "lines": "29-56",
+          "snippet": "export interface AlgorithmMeta {\n\tslug: string;\n\tname: string;\n\tcategory: CategoryId;\n\tdifficulty: Difficulty;\n\t/** One-sentence summary shown in lists and tooltips. */\n\tsummary: string;\n\ttags: string[];\n\tcomplexity: Complexity;\n}\n\nconst O1 = \"O(1)\";\nconst ON = \"O(n)\";\nconst ON2 = \"O(n²)\";\nconst ONLOGN = \"O(n log n)\";\nconst OLOGN = \"O(log n)\";\n\nexport const ALGORITHMS: AlgorithmMeta[] = [\n\t// ── Sorting ────────────────────────────────────────────────────────────\n\t{\n\t\tslug: \"bubble-sort\",\n\t\tname: \"Bubble Sort\",\n\t\tcategory: \"sorting\",\n\t\tdifficulty: \"easy\",\n\t\tsummary: \"Repeatedly swaps adjacent out-of-order elements until sorted.\",\n\t\ttags: [\"sorting\", \"comparison\", \"in-place\", \"stable\"],\n\t\tcomplexity: { timeBest: ON, timeAverage: ON2, timeWorst: ON2, space: O1 },\n\t},",
+          "note": "The shape of one catalog entry; everything else about an algorithm derives from the slug."
+        },
+        {
+          "file": "packages/algorithms/src/languages.ts",
+          "lang": "ts",
+          "lines": "7-27",
+          "snippet": "export const LANGUAGES = [\n\t{ id: \"python\", name: \"Python\", extension: \"py\", indent: 4 },\n\t{ id: \"javascript\", name: \"JavaScript\", extension: \"js\", indent: 2 },\n\t{ id: \"typescript\", name: \"TypeScript\", extension: \"ts\", indent: 2 },\n\t{ id: \"go\", name: \"Go\", extension: \"go\", indent: 4 },\n\t{ id: \"rust\", name: \"Rust\", extension: \"rs\", indent: 4 },\n\t{ id: \"java\", name: \"Java\", extension: \"java\", indent: 4 },\n\t{ id: \"csharp\", name: \"C#\", extension: \"cs\", indent: 4 },\n\t{ id: \"cpp\", name: \"C++\", extension: \"cpp\", indent: 4 },\n\t{ id: \"c\", name: \"C\", extension: \"c\", indent: 4 },\n\t{ id: \"lua\", name: \"Lua\", extension: \"lua\", indent: 4 },\n\t{ id: \"ruby\", name: \"Ruby\", extension: \"rb\", indent: 2 },\n\t{ id: \"kotlin\", name: \"Kotlin\", extension: \"kt\", indent: 4 },\n] as const;\n\nexport type LanguageId = (typeof LANGUAGES)[number][\"id\"];\nexport type Language = (typeof LANGUAGES)[number];\n\nexport const LANGUAGE_IDS = LANGUAGES.map((l) => l.id) as LanguageId[];\n\nexport const DEFAULT_LANGUAGE: LanguageId = \"python\";",
+          "note": "Indent unit per language drives both validation and the engine's Tab behaviour."
+        },
+        {
+          "file": "packages/algorithms/src/loader.ts",
+          "lang": "ts",
+          "lines": "48-70",
+          "snippet": "/**\n * Loads every snippet and explanation from disk. Missing files are skipped so\n * the catalog can grow incrementally; the test-suite enforces completeness.\n */\nexport async function loadContent(): Promise<LoadedContent> {\n\tconst snippets: LoadedSnippet[] = [];\n\tconst explanations: LoadedExplanation[] = [];\n\n\tfor (const algorithm of ALGORITHMS) {\n\t\tconst markdown = await readOptional(explanationPath(algorithm.slug));\n\t\tif (markdown !== null) {\n\t\t\texplanations.push({ slug: algorithm.slug, markdown });\n\t\t}\n\t\tfor (const language of LANGUAGES) {\n\t\t\tconst code = await readOptional(snippetPath(language.id, algorithm.slug));\n\t\t\tif (code !== null) {\n\t\t\t\tsnippets.push({ slug: algorithm.slug, language: language.id, code });\n\t\t\t}\n\t\t}\n\t}\n\n\treturn { algorithms: ALGORITHMS, snippets, explanations };\n}",
+          "note": "Missing files are skipped here so the catalog can grow incrementally; the tests enforce completeness."
+        },
+        {
+          "file": "packages/algorithms/src/validate.ts",
+          "lang": "ts",
+          "lines": "19-39",
+          "snippet": "export function snippetProblems(code: string, indent: number): string[] {\n\tconst problems: string[] = [];\n\tif (code.includes(\"\\r\")) {\n\t\tproblems.push(\"contains CRLF line endings\");\n\t}\n\tif (code.includes(\"\\t\")) {\n\t\tproblems.push(\"contains tab characters\");\n\t}\n\tif (!code.endsWith(\"\\n\") || code.endsWith(\"\\n\\n\")) {\n\t\tproblems.push(\"must end with exactly one newline\");\n\t}\n\tif (NON_ASCII.test(code)) {\n\t\tproblems.push(\"contains non-ASCII characters\");\n\t}\n\tconst lines = code.replace(FINAL_NEWLINE, \"\").split(\"\\n\");\n\tif (lines.length < MIN_LINES || lines.length > MAX_LINES) {\n\t\tproblems.push(\n\t\t\t`has ${lines.length} lines (expected ${MIN_LINES}-${MAX_LINES})`\n\t\t);\n\t}\n\tif (lines[0]?.trim() === \"\") {",
+          "note": "The first half of the rules every snippet must pass before it can be seeded."
+        },
+        {
+          "file": "packages/db/src/seed.ts",
+          "lang": "ts",
+          "lines": "82-110",
+          "snippet": "\tif (content.snippets.length > 0) {\n\t\tawait db\n\t\t\t.insert(snippets)\n\t\t\t.values(\n\t\t\t\tcontent.snippets.map((snippet) => {\n\t\t\t\t\tconst code = snippet.code.replace(TRAILING_NEWLINES, \"\");\n\t\t\t\t\treturn {\n\t\t\t\t\t\talgorithmSlug: snippet.slug,\n\t\t\t\t\t\tlanguageId: snippet.language,\n\t\t\t\t\t\tcode,\n\t\t\t\t\t\tcharCount: code.length,\n\t\t\t\t\t\tlineCount: code.split(\"\\n\").length,\n\t\t\t\t\t\tcontentHash: hash(code),\n\t\t\t\t\t\tupdatedAt: new Date(),\n\t\t\t\t\t};\n\t\t\t\t})\n\t\t\t)\n\t\t\t.onConflictDoUpdate({\n\t\t\t\ttarget: [snippets.algorithmSlug, snippets.languageId],\n\t\t\t\tset: {\n\t\t\t\t\tcode: sql`excluded.code`,\n\t\t\t\t\tcharCount: sql`excluded.char_count`,\n\t\t\t\t\tlineCount: sql`excluded.line_count`,\n\t\t\t\t\tcontentHash: sql`excluded.content_hash`,\n\t\t\t\t\tupdatedAt: sql`excluded.updated_at`,\n\t\t\t\t},\n\t\t\t\tsetWhere: sql`${snippets.contentHash} <> excluded.content_hash`,\n\t\t\t});\n\t}",
+          "note": "Line 94 hashes the code; line 108 makes the upsert a no-op for unchanged snippets."
+        }
+      ],
+      "related": [
+        "database/drizzle-schema",
+        "testing/content-and-route-tests",
+        "system-design/bootstrap-and-shutdown"
+      ],
+      "custom": false
+    },
+    {
+      "id": "database/result-transaction",
+      "title": "Saving a result is one transaction",
+      "summary": "Inserting the result, updating personal and language bests, computing the rank and bumping user stats happen together or not at all.",
+      "explanation": "**What problem it solves.** A finished test touches four tables. If the result row is written but the personal best update fails, the profile lies. If two tabs submit at once, a naive read-then-write on `tests_completed` loses a count.\n\n**How it works here.** `saveResult` in `apps/server/src/lib/results-service.ts` loads the snippet, validates the math, then opens `db.transaction`. Inside it reads the existing personal best for this user, language and algorithm to decide `isPersonalBest`, inserts the `results` row with that flag, and if it is a best writes `personal_bests` with `onConflictDoUpdate` on the composite key. When the run is leaderboard-eligible it does the same for `language_bests`, then computes the rank as one plus the number of rows with a higher wpm in that language. Finally `user_stats` is upserted with SQL expressions like `tests_completed + 1` so the increment happens in the database, not in JavaScript. The route then returns the stored row plus the flags, and the result screen shows \"personal best\" or \"leaderboard rank #n\" from that single response.\n\n**What breaks without it.** Partial writes after a crash, double-counted or lost stats under concurrency, and a result screen that cannot tell the user what just happened.\n\n**Why this choice.** Upserts keyed on composite primary keys replace a select-then-insert-or-update dance with one statement each.",
+      "code": [
+        {
+          "file": "apps/server/src/lib/results-service.ts",
+          "lang": "ts",
+          "lines": "86-123",
+          "snippet": "\treturn await db.transaction(async (tx) => {\n\t\tconst { algorithmSlug, languageId } = snippet.snippet;\n\n\t\tconst [existingPb] = await tx\n\t\t\t.select()\n\t\t\t.from(personalBests)\n\t\t\t.where(\n\t\t\t\tand(\n\t\t\t\t\teq(personalBests.userId, userId),\n\t\t\t\t\teq(personalBests.languageId, languageId),\n\t\t\t\t\teq(personalBests.algorithmSlug, algorithmSlug)\n\t\t\t\t)\n\t\t\t);\n\t\tconst isPersonalBest = !existingPb || body.wpm > existingPb.wpm;\n\n\t\tconst [inserted] = await tx\n\t\t\t.insert(results)\n\t\t\t.values({\n\t\t\t\tuserId,\n\t\t\t\tsnippetId: body.snippetId,\n\t\t\t\talgorithmSlug,\n\t\t\t\tlanguageId,\n\t\t\t\tdifficulty: body.difficulty,\n\t\t\t\twpm: roundTo(body.wpm, 2),\n\t\t\t\traw: roundTo(body.raw, 2),\n\t\t\t\taccuracy: roundTo(body.accuracy, 2),\n\t\t\t\tconsistency: roundTo(body.consistency, 2),\n\t\t\t\tdurationMs: body.durationMs,\n\t\t\t\tchars: body.chars,\n\t\t\t\tkeypressesCorrect: body.keypresses.correct,\n\t\t\t\tkeypressesIncorrect: body.keypresses.incorrect,\n\t\t\t\tchart: body.chart,\n\t\t\t\tstopOnError: body.stopOnError,\n\t\t\t\tautoIndent: body.autoIndent,\n\t\t\t\tblindMode: body.blindMode,\n\t\t\t\tisPersonalBest,\n\t\t\t})\n\t\t\t.returning({ id: results.id });",
+          "note": "Everything from line 86 on runs inside one transaction; line 99 decides the personal best before the insert."
+        },
+        {
+          "file": "apps/server/src/lib/results-service.ts",
+          "lang": "ts",
+          "lines": "128-158",
+          "snippet": "\t\tif (isPersonalBest) {\n\t\t\tawait tx\n\t\t\t\t.insert(personalBests)\n\t\t\t\t.values({\n\t\t\t\t\tuserId,\n\t\t\t\t\tlanguageId,\n\t\t\t\t\talgorithmSlug,\n\t\t\t\t\tresultId: inserted.id,\n\t\t\t\t\twpm: body.wpm,\n\t\t\t\t\traw: body.raw,\n\t\t\t\t\taccuracy: body.accuracy,\n\t\t\t\t\tconsistency: body.consistency,\n\t\t\t\t\tdifficulty: body.difficulty,\n\t\t\t\t})\n\t\t\t\t.onConflictDoUpdate({\n\t\t\t\t\ttarget: [\n\t\t\t\t\t\tpersonalBests.userId,\n\t\t\t\t\t\tpersonalBests.languageId,\n\t\t\t\t\t\tpersonalBests.algorithmSlug,\n\t\t\t\t\t],\n\t\t\t\t\tset: {\n\t\t\t\t\t\tresultId: inserted.id,\n\t\t\t\t\t\twpm: body.wpm,\n\t\t\t\t\t\traw: body.raw,\n\t\t\t\t\t\taccuracy: body.accuracy,\n\t\t\t\t\t\tconsistency: body.consistency,\n\t\t\t\t\t\tdifficulty: body.difficulty,\n\t\t\t\t\t\tachievedAt: new Date(),\n\t\t\t\t\t},\n\t\t\t\t});\n\t\t}",
+          "note": "Insert or update in one statement, targeted at the composite key."
+        },
+        {
+          "file": "apps/server/src/lib/results-service.ts",
+          "lang": "ts",
+          "lines": "201-214",
+          "snippet": "\t\t\tconst bestWpm = isLanguageBest\n\t\t\t\t? body.wpm\n\t\t\t\t: (existingBest?.wpm ?? body.wpm);\n\t\t\tconst [ahead] = await tx\n\t\t\t\t.select({ count: sql<number>`count(*)::int` })\n\t\t\t\t.from(languageBests)\n\t\t\t\t.where(\n\t\t\t\t\tand(\n\t\t\t\t\t\teq(languageBests.languageId, languageId),\n\t\t\t\t\t\tgt(languageBests.wpm, bestWpm)\n\t\t\t\t\t)\n\t\t\t\t);\n\t\t\tleaderboardRank = (ahead?.count ?? 0) + 1;\n\t\t}",
+          "note": "Rank is the count of better rows plus one, computed inside the same transaction."
+        },
+        {
+          "file": "apps/server/src/lib/results-service.ts",
+          "lang": "ts",
+          "lines": "216-232",
+          "snippet": "\t\tawait tx\n\t\t\t.insert(userStats)\n\t\t\t.values({\n\t\t\t\tuserId,\n\t\t\t\ttestsCompleted: 1,\n\t\t\t\ttestsStarted: 1 + body.restartCount,\n\t\t\t\ttimeTypingMs: body.durationMs,\n\t\t\t})\n\t\t\t.onConflictDoUpdate({\n\t\t\t\ttarget: userStats.userId,\n\t\t\t\tset: {\n\t\t\t\t\ttestsCompleted: sql`${userStats.testsCompleted} + 1`,\n\t\t\t\t\ttestsStarted: sql`${userStats.testsStarted} + ${1 + body.restartCount}`,\n\t\t\t\t\ttimeTypingMs: sql`${userStats.timeTypingMs} + ${body.durationMs}`,\n\t\t\t\t\tupdatedAt: new Date(),\n\t\t\t\t},\n\t\t\t});",
+          "note": "Increments are SQL expressions, so concurrent submissions cannot lose a count."
+        }
+      ],
+      "related": [
+        "database/drizzle-schema",
+        "security/server-side-result-validation",
+        "database/leaderboard-queries"
+      ],
+      "custom": false
+    },
+    {
+      "id": "database/leaderboard-queries",
+      "title": "Two leaderboards, two query strategies",
+      "summary": "All-time ranks read a precomputed bests table; the daily board uses a window function over the last 24 hours of results.",
+      "explanation": "**What problem it solves.** An all-time board is read constantly and changes rarely, so it should be cheap. A daily board changes every minute and needs each user's best run within a moving window, which no precomputed table can hold.\n\n**How it works here.** In `apps/server/src/routes/leaderboards.ts` the all-time branch selects from `language_bests` joined to users and algorithms, ordered by wpm then accuracy, with SQL `limit`/`offset` pagination and a separate `count(*)` run in parallel. If the caller is signed in, their own row is fetched and ranked by counting rows with a higher wpm, so the `me` entry is correct even when it is not on the current page. The daily branch builds a CTE with `row_number() over (partition by user order by wpm desc)` over results from the last day that meet the accuracy floor and are not blind-mode, keeps `rn = 1`, and ranks in memory. The profile page reuses the same count-ahead trick to show a rank per language.\n\n**What breaks without it.** Either every page view would aggregate the whole results table, or the daily board would show a user's five runs instead of their best.\n\n**Why this choice.** Precompute what is read often and compute what changes often. One honest caveat: the daily branch paginates in JavaScript after fetching all qualifying rows, which is fine today but would need SQL pagination at scale.",
+      "code": [
+        {
+          "file": "apps/server/src/routes/leaderboards.ts",
+          "lang": "ts",
+          "lines": "59-87",
+          "snippet": "\tif (query.period === \"daily\") {\n\t\t// Best result per user in the last 24 hours.\n\t\tconst ranked = db.$with(\"ranked\").as(\n\t\t\tdb\n\t\t\t\t.select({\n\t\t\t\t\tuserId: results.userId,\n\t\t\t\t\twpm: results.wpm,\n\t\t\t\t\traw: results.raw,\n\t\t\t\t\taccuracy: results.accuracy,\n\t\t\t\t\tconsistency: results.consistency,\n\t\t\t\t\talgorithmSlug: results.algorithmSlug,\n\t\t\t\t\tachievedAt: results.createdAt,\n\t\t\t\t\trn: sql<number>`row_number() over (partition by ${results.userId} order by ${results.wpm} desc)`.as(\n\t\t\t\t\t\t\"rn\"\n\t\t\t\t\t),\n\t\t\t\t})\n\t\t\t\t.from(results)\n\t\t\t\t.where(\n\t\t\t\t\tand(\n\t\t\t\t\t\teq(results.languageId, query.language),\n\t\t\t\t\t\tgte(results.createdAt, DAILY_WINDOW),\n\t\t\t\t\t\tgte(results.accuracy, MIN_LEADERBOARD_ACCURACY),\n\t\t\t\t\t\teq(results.blindMode, false),\n\t\t\t\t\t\t...(query.algorithm\n\t\t\t\t\t\t\t? [eq(results.algorithmSlug, query.algorithm)]\n\t\t\t\t\t\t\t: [])\n\t\t\t\t\t)\n\t\t\t\t)\n\t\t);",
+          "note": "A CTE ranks each user's results within the day; line 71 is the window function."
+        },
+        {
+          "file": "apps/server/src/routes/leaderboards.ts",
+          "lang": "ts",
+          "lines": "125-160",
+          "snippet": "\tconst where = and(\n\t\teq(languageBests.languageId, query.language),\n\t\t...(query.algorithm\n\t\t\t? [eq(languageBests.algorithmSlug, query.algorithm)]\n\t\t\t: [])\n\t);\n\tconst [rows, [count]] = await Promise.all([\n\t\tdb\n\t\t\t.select({\n\t\t\t\tuserId: languageBests.userId,\n\t\t\t\tusername: users.username,\n\t\t\t\tname: users.name,\n\t\t\t\timage: users.image,\n\t\t\t\twpm: languageBests.wpm,\n\t\t\t\traw: languageBests.raw,\n\t\t\t\taccuracy: languageBests.accuracy,\n\t\t\t\tconsistency: languageBests.consistency,\n\t\t\t\talgorithmSlug: languageBests.algorithmSlug,\n\t\t\t\talgorithmName: algorithms.name,\n\t\t\t\tachievedAt: languageBests.achievedAt,\n\t\t\t})\n\t\t\t.from(languageBests)\n\t\t\t.innerJoin(users, eq(languageBests.userId, users.id))\n\t\t\t.innerJoin(algorithms, eq(languageBests.algorithmSlug, algorithms.slug))\n\t\t\t.where(where)\n\t\t\t.orderBy(desc(languageBests.wpm), desc(languageBests.accuracy))\n\t\t\t.limit(query.pageSize)\n\t\t\t.offset(query.page * query.pageSize),\n\t\tdb\n\t\t\t.select({ count: sql<number>`count(*)::int` })\n\t\t\t.from(languageBests)\n\t\t\t.where(where),\n\t]);\n\tconst entries = rows.map((row, index) =>\n\t\tentry(query.page * query.pageSize + index + 1, row)\n\t);",
+          "note": "The all-time board is a plain indexed read with SQL pagination and a parallel count."
+        },
+        {
+          "file": "apps/server/src/routes/leaderboards.ts",
+          "lang": "ts",
+          "lines": "162-189",
+          "snippet": "\tlet mine: LeaderboardEntryDto | null = null;\n\tif (me) {\n\t\tconst [own] = await db\n\t\t\t.select({\n\t\t\t\tuserId: languageBests.userId,\n\t\t\t\tusername: users.username,\n\t\t\t\tname: users.name,\n\t\t\t\timage: users.image,\n\t\t\t\twpm: languageBests.wpm,\n\t\t\t\traw: languageBests.raw,\n\t\t\t\taccuracy: languageBests.accuracy,\n\t\t\t\tconsistency: languageBests.consistency,\n\t\t\t\talgorithmSlug: languageBests.algorithmSlug,\n\t\t\t\talgorithmName: algorithms.name,\n\t\t\t\tachievedAt: languageBests.achievedAt,\n\t\t\t})\n\t\t\t.from(languageBests)\n\t\t\t.innerJoin(users, eq(languageBests.userId, users.id))\n\t\t\t.innerJoin(algorithms, eq(languageBests.algorithmSlug, algorithms.slug))\n\t\t\t.where(and(where, eq(languageBests.userId, me.id)));\n\t\tif (own) {\n\t\t\tconst [ahead] = await db\n\t\t\t\t.select({ count: sql<number>`count(*)::int` })\n\t\t\t\t.from(languageBests)\n\t\t\t\t.where(and(where, sql`${languageBests.wpm} > ${own.wpm}`));\n\t\t\tmine = entry((ahead?.count ?? 0) + 1, own);\n\t\t}\n\t}",
+          "note": "The caller's own rank is computed independently of the page being viewed."
+        },
+        {
+          "file": "apps/server/src/routes/users.ts",
+          "lang": "ts",
+          "lines": "88-101",
+          "snippet": "\tconst ranks = await Promise.all(\n\t\tbests.map(async ({ best }) => {\n\t\t\tconst [ahead] = await db\n\t\t\t\t.select({ count: sql<number>`count(*)::int` })\n\t\t\t\t.from(languageBests)\n\t\t\t\t.where(\n\t\t\t\t\tand(\n\t\t\t\t\t\teq(languageBests.languageId, best.languageId),\n\t\t\t\t\t\tgt(languageBests.wpm, best.wpm)\n\t\t\t\t\t)\n\t\t\t\t);\n\t\t\treturn { language: best.languageId, rank: (ahead?.count ?? 0) + 1 };\n\t\t})\n\t);",
+          "note": "The same count-ahead rank reused for the profile's per-language ranks."
+        }
+      ],
+      "related": [
+        "database/drizzle-schema",
+        "database/result-transaction",
+        "auth/optional-session-middleware"
+      ],
+      "custom": false
+    },
+    {
+      "id": "api-design/shared-contracts",
+      "title": "One shared package defines the API shapes",
+      "summary": "Zod schemas and DTO interfaces in packages/shared are imported by both the Hono server and the React client, so a field rename breaks the build, not production.",
+      "explanation": "**What problem it solves.** In a split front end and back end, the usual failure is drift: the server renames `wpm` to `speed`, the client keeps reading `wpm`, and nothing complains until a user sees `undefined`. Two copies of validation rules drift the same way.\n\n**How it works here.** `packages/shared/src/api.ts` holds the request schemas (`SubmitResultSchema`, `LeaderboardQuerySchema`, ...) and the response interfaces (`SnippetDto`, `ResultDto`, `LeaderboardResponse`, ...). Enums are not retyped: `LANGUAGE_IDS` and `DIFFICULTIES` come from the algorithms catalog, so adding a language in `languages.ts` automatically widens what the API accepts. On the server, `apps/server/src/lib/dto.ts` maps Drizzle rows to these DTOs explicitly, which is also where internal columns (keypress counts, content hash) are kept out of responses. On the client, `apps/web/src/lib/queries.ts` types every `queryOptions` with the same interfaces, so components get autocomplete on `snippet.algorithm.complexity.timeAverage` without a generated client. Constants like `USERNAME_MIN` and `PASSWORD_MIN` are shared too, so the sign-up form shows the same limits the auth server enforces.\n\n**What breaks without it.** Silent `undefined`s after refactors, and validation messages that disagree between form and API.\n\n**Why this choice.** A workspace package costs nothing at runtime; the exports point at `.ts` source so there is no build step to forget.",
+      "code": [
+        {
+          "file": "packages/shared/src/api.ts",
+          "lang": "ts",
+          "lines": "1-12",
+          "snippet": "import { DIFFICULTIES, LANGUAGE_IDS } from \"@type-ninja/algorithms\";\nimport { z } from \"zod\";\n\n/** Hard sanity caps used by the server to reject impossible results. */\nexport const MAX_WPM = 400;\nexport const MAX_RESULT_CHART_POINTS = 3600;\nexport const MIN_RESULT_DURATION_MS = 1000;\nexport const MIN_LEADERBOARD_ACCURACY = 80;\nexport const USERNAME_MIN = 3;\nexport const USERNAME_MAX = 20;\nexport const USERNAME_REGEX = /^[a-zA-Z0-9_.-]+$/;\nexport const PASSWORD_MIN = 8;",
+          "note": "Enums and limits are imported from the catalog or defined once here, then used on both sides."
+        },
+        {
+          "file": "packages/shared/src/api.ts",
+          "lang": "ts",
+          "lines": "101-132",
+          "snippet": "export interface LanguageDto {\n\tid: string;\n\tname: string;\n\textension: string;\n\tindent: number;\n}\n\nexport interface AlgorithmDto {\n\tslug: string;\n\tname: string;\n\tcategory: string;\n\tdifficulty: string;\n\tsummary: string;\n\ttags: string[];\n\tcomplexity: {\n\t\ttimeBest: string;\n\t\ttimeAverage: string;\n\t\ttimeWorst: string;\n\t\tspace: string;\n\t};\n\t/** Languages that have a snippet for this algorithm. */\n\tlanguages: string[];\n}\n\nexport interface SnippetDto {\n\tid: number;\n\talgorithm: AlgorithmDto;\n\tlanguage: LanguageDto;\n\tcode: string;\n\tcharCount: number;\n\tlineCount: number;\n}",
+          "note": "Response DTOs the server promises and the client expects."
+        },
+        {
+          "file": "apps/server/src/lib/dto.ts",
+          "lang": "ts",
+          "lines": "64-85",
+          "snippet": "export function toResultDto(row: ResultRow, algorithmName: string): ResultDto {\n\treturn {\n\t\tid: row.id,\n\t\tsnippetId: row.snippetId,\n\t\talgorithmSlug: row.algorithmSlug,\n\t\talgorithmName,\n\t\tlanguage: row.languageId,\n\t\tdifficulty: row.difficulty,\n\t\twpm: row.wpm,\n\t\traw: row.raw,\n\t\taccuracy: row.accuracy,\n\t\tconsistency: row.consistency,\n\t\tdurationMs: row.durationMs,\n\t\tchars: row.chars,\n\t\tchart: row.chart,\n\t\tstopOnError: row.stopOnError,\n\t\tautoIndent: row.autoIndent,\n\t\tblindMode: row.blindMode,\n\t\tisPersonalBest: row.isPersonalBest,\n\t\tcreatedAt: row.createdAt.toISOString(),\n\t};\n}",
+          "note": "Explicit row-to-DTO mapping; what is not listed here never leaves the server."
+        },
+        {
+          "file": "apps/web/src/lib/queries.ts",
+          "lang": "ts",
+          "lines": "32-52",
+          "snippet": "export const languagesQuery = queryOptions({\n\tqueryKey: [\"languages\"],\n\tqueryFn: () => api<{ languages: LanguageDto[] }>(\"/languages\"),\n\tstaleTime: LONG_STALE,\n});\n\nexport const algorithmsQuery = queryOptions({\n\tqueryKey: [\"algorithms\"],\n\tqueryFn: () => api<{ algorithms: AlgorithmDto[] }>(\"/algorithms\"),\n\tstaleTime: LONG_STALE,\n});\n\nexport const algorithmQuery = (slug: string) =>\n\tqueryOptions({\n\t\tqueryKey: [\"algorithm\", slug],\n\t\tqueryFn: () =>\n\t\t\tapi<{ algorithm: AlgorithmDto; explanation: ExplanationDto }>(\n\t\t\t\t`/algorithms/${slug}`\n\t\t\t),\n\t\tstaleTime: LONG_STALE,\n\t});",
+          "note": "Client queries typed with the shared interfaces, with a long staleTime for catalog data."
+        }
+      ],
+      "related": [
+        "security/input-validation",
+        "communication/rest-json-api",
+        "database/content-seeding"
+      ],
+      "custom": false
+    },
+    {
+      "id": "communication/rest-json-api",
+      "title": "REST over one fetch wrapper with a fixed error envelope",
+      "summary": "Every API call goes through api(); every failure is {error:{code,message}}; React Query retries only what is worth retrying and refreshes what a mutation changed.",
+      "explanation": "**What problem it solves.** Thirty call sites each doing `fetch`, checking `response.ok` and guessing at the error format is how apps end up with inconsistent spinners and swallowed failures. The server and client need one agreed way to say \"this went wrong\".\n\n**How it works here.** On the server, any handler can `throw badRequest(...)`, `notFound(...)` or `unauthorized()` from `apps/server/src/lib/errors.ts`; `app.onError` in `app.ts` turns an `HttpError` into `{ error: { code, message, details } }` with its status, logs anything else and hides the message in production. Unknown `/api/*` paths get the same shape with a 404. On the client, `api()` in `apps/web/src/lib/api.ts` prefixes `/api/v1`, sends the cookie with `credentials: include`, sets the JSON header only when there is a body, and converts a non-OK response into an `ApiRequestError` carrying the server's code. `createQueryClient` in `query-client.ts` retries network errors and 5xx (plus 408 and 429) with jittered exponential backoff, but never other 4xx, because retrying a 400 will not help. Mutations such as `useSubmitResult` invalidate the `[\"me\"]` and `[\"leaderboard\"]` query keys so the profile and board refetch after a save.\n\n**What breaks without it.** A 401 would look like a network hiccup, a 400 would be retried three times, and the leaderboard would show stale ranks after a personal best.\n\n**Why this choice.** Plain REST plus JSON is enough for a handful of endpoints; the discipline is in the shared envelope, not the transport.",
+      "code": [
+        {
+          "file": "apps/server/src/lib/errors.ts",
+          "lang": "ts",
+          "lines": "3-29",
+          "snippet": "export class HttpError extends Error {\n\treadonly status: ContentfulStatusCode;\n\treadonly code: string;\n\treadonly details?: unknown;\n\n\tconstructor(\n\t\tstatus: ContentfulStatusCode,\n\t\tcode: string,\n\t\tmessage: string,\n\t\tdetails?: unknown\n\t) {\n\t\tsuper(message);\n\t\tthis.name = \"HttpError\";\n\t\tthis.status = status;\n\t\tthis.code = code;\n\t\tthis.details = details;\n\t}\n}\n\nexport const notFound = (message = \"Not found\") =>\n\tnew HttpError(404, \"NOT_FOUND\", message);\nexport const badRequest = (message: string, details?: unknown) =>\n\tnew HttpError(400, \"BAD_REQUEST\", message, details);\nexport const unauthorized = () =>\n\tnew HttpError(401, \"UNAUTHORIZED\", \"You must be signed in\");\nexport const conflict = (message: string) =>\n\tnew HttpError(409, \"CONFLICT\", message);",
+          "note": "One error class with status and machine-readable code, plus helpers for the common cases."
+        },
+        {
+          "file": "apps/server/src/app.ts",
+          "lang": "ts",
+          "lines": "50-80",
+          "snippet": "app.notFound((c) => {\n\tif (c.req.path.startsWith(\"/api/\")) {\n\t\treturn c.json(\n\t\t\t{ error: { code: \"NOT_FOUND\", message: \"Route not found\" } },\n\t\t\t404\n\t\t);\n\t}\n\treturn c.text(\"Not found\", 404);\n});\n\napp.onError((err, c) => {\n\tif (err instanceof HttpError) {\n\t\treturn c.json(\n\t\t\t{ error: { code: err.code, message: err.message, details: err.details } },\n\t\t\terr.status\n\t\t);\n\t}\n\tlogger.error({ err }, \"Unhandled error\");\n\treturn c.json(\n\t\t{\n\t\t\terror: {\n\t\t\t\tcode: \"INTERNAL_SERVER_ERROR\",\n\t\t\t\tmessage:\n\t\t\t\t\tenv.NODE_ENV === \"production\"\n\t\t\t\t\t\t? \"An unexpected error occurred\"\n\t\t\t\t\t\t: err.message,\n\t\t\t},\n\t\t},\n\t\t500\n\t);\n});",
+          "note": "Lines 60-66 serialise HttpError; lines 72-75 hide internal messages in production."
+        },
+        {
+          "file": "apps/web/src/lib/api.ts",
+          "lang": "ts",
+          "lines": "25-49",
+          "snippet": "export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {\n\tconst response = await fetch(`${API_BASE}/api/v1${path}`, {\n\t\tcredentials: \"include\",\n\t\t...init,\n\t\theaders: {\n\t\t\t...(init.body ? { \"Content-Type\": \"application/json\" } : {}),\n\t\t\t...init.headers,\n\t\t},\n\t});\n\tif (!response.ok) {\n\t\tlet payload: ApiError | null = null;\n\t\ttry {\n\t\t\tpayload = (await response.json()) as ApiError;\n\t\t} catch {\n\t\t\tpayload = null;\n\t\t}\n\t\tthrow new ApiRequestError(\n\t\t\tresponse.status,\n\t\t\tpayload?.error.code ?? \"HTTP_ERROR\",\n\t\t\tpayload?.error.message ?? response.statusText,\n\t\t\tpayload?.error.details\n\t\t);\n\t}\n\treturn (await response.json()) as T;\n}",
+          "note": "Cookie always sent; a non-OK response becomes a typed ApiRequestError with the server's code."
+        },
+        {
+          "file": "apps/web/src/lib/query-client.ts",
+          "lang": "ts",
+          "lines": "37-52",
+          "snippet": "function shouldRetry(failureCount: number, error: unknown): boolean {\n\tif (failureCount >= MAX_RETRIES) {\n\t\treturn false;\n\t}\n\n\t// If the error carries an HTTP status, inspect it\n\tif (error instanceof Error && \"status\" in error) {\n\t\tconst status = (error as Error & { status: number }).status;\n\t\t// Don't retry client errors (except timeout & rate-limit)\n\t\tif (status >= 400 && status < 500 && status !== 408 && status !== 429) {\n\t\t\treturn false;\n\t\t}\n\t}\n\n\treturn true;\n}",
+          "note": "Retry policy: client errors are final, server and network errors get another chance."
+        },
+        {
+          "file": "apps/web/src/lib/queries.ts",
+          "lang": "ts",
+          "lines": "107-120",
+          "snippet": "export function useSubmitResult() {\n\tconst client = useQueryClient();\n\treturn useMutation({\n\t\tmutationFn: (body: SubmitResult) =>\n\t\t\tapi<SubmitResultResponse>(\"/results\", {\n\t\t\t\tmethod: \"POST\",\n\t\t\t\tbody: JSON.stringify(body),\n\t\t\t}),\n\t\tonSuccess: () => {\n\t\t\tclient.invalidateQueries({ queryKey: [\"me\"] });\n\t\t\tclient.invalidateQueries({ queryKey: [\"leaderboard\"] });\n\t\t},\n\t});\n}",
+          "note": "After a result is saved, profile and leaderboard caches are invalidated so they refetch."
+        }
+      ],
+      "related": [
+        "api-design/shared-contracts",
+        "security/input-validation",
+        "state-management/config-sync"
+      ],
+      "custom": false
+    },
+    {
+      "id": "networking/same-origin-deploy",
+      "title": "One origin in production, CORS only in development",
+      "summary": "The Bun API serves the built web app, so cookies are plain same-site; CORS and cross-site cookie flags switch on only when a separate web origin is configured.",
+      "explanation": "**What problem it solves.** A split API and web host means CORS preflights, `SameSite=None` cookies and two domains to keep in sync. For a small app that complexity buys nothing; but during development Vite runs on port 9898 and the API on 9797, so the cross-origin case still has to work.\n\n**How it works here.** In `apps/server/src/app.ts`, CORS middleware is registered only `if (env.CORS_ORIGIN)`, with `credentials: true` so the browser may send the session cookie. `mountStaticWeb` serves the Vite build from `WEB_DIST_DIR` and falls back to `index.html` for any unknown path, which is what makes client-side routes like `/profile/ada` load on refresh. The Dockerfile builds the web app with `VITE_SERVER_URL` empty, so `API_BASE` in the client is `\"\"` and requests go to the same host. The auth package mirrors this: `sameOrigin = !env.CORS_ORIGIN` chooses `SameSite=Lax` cookies in production and `None` plus `Secure` when a separate origin exists. `trustedOrigins` includes both URLs so Better Auth accepts the callback.\n\n**What breaks without it.** Deep links would 404 on refresh, or cookies would be dropped on cross-origin requests and users would appear signed out after every reload.\n\n**Why this choice.** Serving the SPA from the API removes a whole class of cookie and CORS bugs and halves the number of things to deploy.",
+      "code": [
+        {
+          "file": "apps/server/src/app.ts",
+          "lang": "ts",
+          "lines": "29-39",
+          "snippet": "if (env.CORS_ORIGIN) {\n\tapp.use(\n\t\t\"/api/*\",\n\t\tcors({\n\t\t\torigin: env.CORS_ORIGIN,\n\t\t\tallowMethods: [\"GET\", \"POST\", \"PUT\", \"DELETE\", \"PATCH\", \"OPTIONS\"],\n\t\t\tallowHeaders: [\"Content-Type\", \"Authorization\"],\n\t\t\tcredentials: true,\n\t\t})\n\t);\n}",
+          "note": "CORS exists only when a separate web origin is configured; credentials must be allowed for cookies to travel."
+        },
+        {
+          "file": "apps/server/src/app.ts",
+          "lang": "ts",
+          "lines": "82-94",
+          "snippet": "/** In production the API serves the built web app with an SPA fallback. */\nexport function mountStaticWeb(distDir: string) {\n\tif (!existsSync(join(distDir, \"index.html\"))) {\n\t\tlogger.warn(\n\t\t\t{ distDir },\n\t\t\t\"WEB_DIST_DIR has no index.html; static serving disabled\"\n\t\t);\n\t\treturn;\n\t}\n\tlogger.info({ distDir }, \"serving web app\");\n\tapp.use(\"/*\", serveStatic({ root: distDir }));\n\tapp.get(\"/*\", serveStatic({ root: distDir, path: \"index.html\" }));\n}",
+          "note": "Static files first, then index.html for everything else: the SPA fallback."
+        },
+        {
+          "file": "packages/auth/src/index.ts",
+          "lang": "ts",
+          "lines": "66-72",
+          "snippet": "function createAuth() {\n\tconst db = getDB();\n\tconst trustedOrigins = [env.BETTER_AUTH_URL, env.CORS_ORIGIN].filter(\n\t\t(origin): origin is string => Boolean(origin)\n\t);\n\tconst sameOrigin = !env.CORS_ORIGIN;\n",
+          "note": "The same env value decides trusted origins and the cookie policy."
+        },
+        {
+          "file": "Dockerfile",
+          "lang": "dockerfile",
+          "lines": "26-32",
+          "snippet": "# ── Build the web app ───────────────────────────────────────────────────────\nFROM deps AS build\nCOPY . .\n# The web app is served from the same origin as the API in production,\n# so VITE_SERVER_URL is intentionally empty.\nENV VITE_SERVER_URL=\"\"\nRUN bun run --cwd apps/web build",
+          "note": "The web bundle is built with an empty API URL so it calls its own origin."
+        }
+      ],
+      "related": [
+        "auth/sessions-and-cookies",
+        "devops/docker-image",
+        "security/validated-env"
+      ],
+      "custom": false
+    },
+    {
+      "id": "system-design/bootstrap-and-shutdown",
+      "title": "Boot order and graceful shutdown",
+      "summary": "Connect to Postgres, run migrations, seed content, build auth, mount the web app, then listen; on SIGTERM stop accepting and close the pool.",
+      "explanation": "**What problem it solves.** Several pieces depend on each other: auth needs the database, seeding needs migrations, the static server needs a build directory. If they initialise in the wrong order you get confusing errors on the first request, and if the process dies mid-query during a deploy you get half-written rows and dangling connections.\n\n**How it works here.** `bootstrap()` in `apps/server/src/index.ts` is explicit and sequential: `initializeDB` creates a `pg` pool (max 10 connections, 5 second connect timeout) and runs `select 1` so a bad `DATABASE_URL` fails immediately; `runMigrations` applies pending SQL from `packages/db/src/migrations` using drizzle's migrator; `seedContent` upserts the algorithm corpus; `initializeAuth` builds the Better Auth singleton; `mountStaticWeb` is attached only when `WEB_DIST_DIR` is set; finally `Bun.serve` starts. Both migrations and seeding are behind env flags so a developer can turn them off. `getAuth()` throws if called before `initializeAuth`, which turns an ordering bug into a clear message. `shutdown` stops the server, closes the pool and exits; `uncaughtException` and `unhandledRejection` log at fatal level and exit so the container restarts clean rather than limping.\n\n**What breaks without it.** A race between the first request and the schema, or a deploy that leaves connections open until Postgres hits its limit.\n\n**Why this choice.** Running migrations and seeds in the app's own boot keeps the deploy to a single image with no separate job to orchestrate.",
+      "code": [
+        {
+          "file": "apps/server/src/index.ts",
+          "lang": "ts",
+          "lines": "10-29",
+          "snippet": "async function bootstrap() {\n\tlogger.info(\"initializing services\");\n\tawait initializeDB();\n\tif (env.RUN_MIGRATIONS_ON_START) {\n\t\tawait runMigrations();\n\t}\n\tif (env.SEED_ON_START) {\n\t\tawait seedContent();\n\t}\n\tinitializeAuth();\n\tif (env.WEB_DIST_DIR) {\n\t\tmountStaticWeb(env.WEB_DIST_DIR);\n\t}\n\n\tconst server = serve({ fetch: app.fetch, port: env.PORT });\n\tlogger.info({ port: env.PORT, env: env.NODE_ENV }, \"server started\");\n\treturn server;\n}\n\nconst server = await bootstrap();",
+          "note": "Each step depends on the one before; the flags on lines 13 and 16 let development skip them."
+        },
+        {
+          "file": "apps/server/src/index.ts",
+          "lang": "ts",
+          "lines": "31-47",
+          "snippet": "async function shutdown(signal: string) {\n\tlogger.info({ signal }, \"shutting down\");\n\tserver.stop();\n\tawait closeDB();\n\tprocess.exit(0);\n}\n\nprocess.on(\"SIGINT\", () => shutdown(\"SIGINT\"));\nprocess.on(\"SIGTERM\", () => shutdown(\"SIGTERM\"));\nprocess.on(\"uncaughtException\", (error) => {\n\tlogger.fatal({ error }, \"uncaught exception\");\n\tprocess.exit(1);\n});\nprocess.on(\"unhandledRejection\", (reason) => {\n\tlogger.fatal({ reason }, \"unhandled promise rejection\");\n\tprocess.exit(1);\n});",
+          "note": "Stop listening, drain the pool, exit; unexpected errors crash on purpose so the orchestrator restarts the container."
+        },
+        {
+          "file": "packages/db/src/client.ts",
+          "lang": "ts",
+          "lines": "4-25",
+          "snippet": "let pool: Pool | null = null;\n\nconst MAX_CONNECTIONS = 10;\nconst IDLE_TIMEOUT_MS = 30_000;\nconst CONNECTION_TIMEOUT_MS = 5000;\n\nexport function createPool() {\n\tpool = new Pool({\n\t\tconnectionString: env.DATABASE_URL,\n\t\tmax: MAX_CONNECTIONS,\n\t\tidleTimeoutMillis: IDLE_TIMEOUT_MS,\n\t\tconnectionTimeoutMillis: CONNECTION_TIMEOUT_MS,\n\t});\n\treturn pool;\n}\n\nexport function getPool() {\n\tif (!pool) {\n\t\treturn createPool();\n\t}\n\treturn pool;\n}",
+          "note": "A single pool with bounded connections and timeouts, created lazily."
+        },
+        {
+          "file": "packages/db/src/migrate.ts",
+          "lang": "ts",
+          "lines": "6-13",
+          "snippet": "const MIGRATIONS_FOLDER = join(import.meta.dirname, \"migrations\");\n\n/** Applies pending SQL migrations from `src/migrations` (generated by drizzle-kit). */\nexport async function runMigrations() {\n\tlogger.info({ folder: MIGRATIONS_FOLDER }, \"running migrations\");\n\tawait migrate(getDB(), { migrationsFolder: MIGRATIONS_FOLDER });\n\tlogger.info(\"migrations complete\");\n}",
+          "note": "Pending SQL migrations generated by drizzle-kit are applied programmatically on boot."
+        },
+        {
+          "file": "packages/auth/src/index.ts",
+          "lang": "ts",
+          "lines": "131-143",
+          "snippet": "export function initializeAuth() {\n\tif (!authInstance) {\n\t\tauthInstance = createAuth();\n\t}\n\treturn authInstance;\n}\n\nexport function getAuth() {\n\tif (!authInstance) {\n\t\tthrow new Error(\"Auth not initialized. Call initializeAuth() first.\");\n\t}\n\treturn authInstance;\n}",
+          "note": "A lazy singleton with a loud error if something asks for auth before boot built it."
+        }
+      ],
+      "related": [
+        "database/content-seeding",
+        "devops/docker-image",
+        "security/validated-env"
+      ],
+      "custom": false
+    },
+    {
+      "id": "ui-components/typing-area",
+      "title": "Hidden input, measured caret, scrolling lines",
+      "summary": "An invisible input captures keystrokes, each character is a span coloured by engine state, and the caret is positioned by measuring the active span.",
+      "explanation": "**What problem it solves.** Browsers do not give you keystrokes with timestamps unless something focusable has focus, and a real text box would fight the engine with its own cursor, autocorrect and paste. The display also has to show pending, correct, wrong and extra characters and keep the caret exactly on the next one at any font size.\n\n**How it works here.** `TypingArea` in `apps/web/src/components/test/typing-area.tsx` renders an `<input>` with `opacity-0`, `value=\"\"`, autocorrect off and paste prevented; it only exists to receive `onKeyDown`. A window listener refocuses it when you press a printable key anywhere else, unless you are typing in another field or the palette. `toKeyEvent` in `use-typing-test.ts` translates DOM keys into engine `KeyEvent`s, with `alt+Backspace` and `ctrl+Backspace` as word deletes. `onBeforeInput` catches text that arrives without key events (mobile keyboards, IME) and feeds it character by character. Each line is rendered from `charStates(line)` as spans with classes `correct`, `incorrect`, `extra`, `skipped`, `pending`; CSS variables colour them per theme. A `useLayoutEffect` finds the span at the caret column, measures it with `getBoundingClientRect`, and moves an absolutely positioned caret with `transform`. The whole block is translated up so the active line sits on row three, with a CSS transition for smooth scrolling.\n\n**What breaks without it.** No timestamps, no Tab or Escape control, and a caret that drifts when the font changes.\n\n**Why this choice.** Measuring real spans is more robust than computing character widths, which fails with ligature fonts like Fira Code.",
+      "code": [
+        {
+          "file": "apps/web/src/components/test/typing-area.tsx",
+          "lang": "tsx",
+          "lines": "259-285",
+          "snippet": "\t\t\t\t<input\n\t\t\t\t\taria-label=\"Typing input\"\n\t\t\t\t\tautoCapitalize=\"off\"\n\t\t\t\t\tautoComplete=\"off\"\n\t\t\t\t\tautoCorrect=\"off\"\n\t\t\t\t\tclassName=\"absolute inset-0 h-full w-full cursor-default opacity-0\"\n\t\t\t\t\tonBeforeInput={(event) => {\n\t\t\t\t\t\tconst native = event.nativeEvent as Partial<InputEvent>;\n\t\t\t\t\t\tconst inserting =\n\t\t\t\t\t\t\tnative.inputType === undefined ||\n\t\t\t\t\t\t\tnative.inputType === \"insertText\";\n\t\t\t\t\t\tif (inserting && native.data) {\n\t\t\t\t\t\t\tevent.preventDefault();\n\t\t\t\t\t\t\tonInsertText?.(native.data);\n\t\t\t\t\t\t}\n\t\t\t\t\t}}\n\t\t\t\t\tonBlur={() => setFocused(false)}\n\t\t\t\t\tonChange={() => undefined}\n\t\t\t\t\tonFocus={() => setFocused(true)}\n\t\t\t\t\tonKeyDown={handleKeyDown}\n\t\t\t\t\tonPaste={(e) => e.preventDefault()}\n\t\t\t\t\tref={inputRef}\n\t\t\t\t\tspellCheck={false}\n\t\t\t\t\ttabIndex={0}\n\t\t\t\t\ttype=\"text\"\n\t\t\t\t\tvalue=\"\"\n\t\t\t\t/>",
+          "note": "The input is invisible and always empty; it exists to receive key events. onBeforeInput handles mobile and IME text."
+        },
+        {
+          "file": "apps/web/src/components/test/typing-area.tsx",
+          "lang": "tsx",
+          "lines": "52-78",
+          "snippet": "\t// Any key press while unfocused returns focus to the test.\n\tuseEffect(() => {\n\t\tconst handler = (event: KeyboardEvent) => {\n\t\t\tif (document.activeElement === inputRef.current) {\n\t\t\t\treturn;\n\t\t\t}\n\t\t\tconst target = event.target as HTMLElement | null;\n\t\t\tconst typingElsewhere =\n\t\t\t\ttarget &&\n\t\t\t\t(target.tagName === \"INPUT\" ||\n\t\t\t\t\ttarget.tagName === \"TEXTAREA\" ||\n\t\t\t\t\ttarget.isContentEditable ||\n\t\t\t\t\ttarget.closest(\"[cmdk-root]\"));\n\t\t\tif (typingElsewhere || event.ctrlKey || event.metaKey) {\n\t\t\t\treturn;\n\t\t\t}\n\t\t\tif (\n\t\t\t\tevent.key.length === 1 ||\n\t\t\t\tevent.key === \"Enter\" ||\n\t\t\t\tevent.key === \"Backspace\"\n\t\t\t) {\n\t\t\t\tfocusInput();\n\t\t\t}\n\t\t};\n\t\twindow.addEventListener(\"keydown\", handler);\n\t\treturn () => window.removeEventListener(\"keydown\", handler);\n\t}, [focusInput]);",
+          "note": "Any printable key refocuses the test unless the user is typing somewhere else."
+        },
+        {
+          "file": "apps/web/src/hooks/use-typing-test.ts",
+          "lang": "ts",
+          "lines": "264-281",
+          "snippet": "function toKeyEvent(\n\tevent: React.KeyboardEvent<HTMLInputElement>,\n\ttime: number\n): KeyEvent | null {\n\tswitch (event.key) {\n\t\tcase \"Backspace\":\n\t\t\treturn { type: \"backspace\", word: event.altKey, time };\n\t\tcase \"Enter\":\n\t\t\treturn { type: \"enter\", time };\n\t\tcase \"Tab\":\n\t\t\treturn { type: \"tab\", time };\n\t\tdefault:\n\t\t\tif (event.key.length !== 1 || event.altKey) {\n\t\t\t\treturn null;\n\t\t\t}\n\t\t\treturn { type: \"char\", char: event.key, time };\n\t}\n}",
+          "note": "DOM keys become engine events; anything with alt or longer than one character is ignored."
+        },
+        {
+          "file": "apps/web/src/components/test/typing-area.tsx",
+          "lang": "tsx",
+          "lines": "110-145",
+          "snippet": "\t// Position the caret on the active character.\n\tuseLayoutEffect(() => {\n\t\tconst container = linesRef.current;\n\t\tconst caret = caretRef.current;\n\t\tif (!(container && caret)) {\n\t\t\treturn;\n\t\t}\n\t\tconst line = container.querySelector<HTMLElement>(\n\t\t\t`[data-line=\"${test.lineIndex}\"]`\n\t\t);\n\t\tif (!line) {\n\t\t\treturn;\n\t\t}\n\t\tconst col = test.lines[test.lineIndex]?.typed.length ?? 0;\n\t\tconst chars = line.querySelectorAll<HTMLElement>(\".char\");\n\t\tconst containerRect = container.getBoundingClientRect();\n\t\tlet x: number;\n\t\tlet y: number;\n\t\tlet height: number;\n\t\tconst target = chars[col];\n\t\tif (target) {\n\t\t\tconst rect = target.getBoundingClientRect();\n\t\t\tx = rect.left - containerRect.left;\n\t\t\ty = rect.top - containerRect.top;\n\t\t\theight = rect.height;\n\t\t} else {\n\t\t\tconst last = chars.item(chars.length - 1);\n\t\t\tconst content = line.querySelector<HTMLElement>(\".line-content\");\n\t\t\tconst rect = (last ?? content ?? line).getBoundingClientRect();\n\t\t\tx = (last ? rect.right : rect.left) - containerRect.left;\n\t\t\ty = rect.top - containerRect.top;\n\t\t\theight = rect.height;\n\t\t}\n\t\tcaret.style.transform = `translate(${x}px, ${y}px)`;\n\t\tcaret.style.height = `${height}px`;\n\t}, [test]);",
+          "note": "The caret is placed by measuring the target span after layout, so it is right for any font or size."
+        },
+        {
+          "file": "apps/web/src/components/test/typing-area.tsx",
+          "lang": "tsx",
+          "lines": "219-239",
+          "snippet": "\t\t\t\t\t\t\t\t<span className=\"line-content\">\n\t\t\t\t\t\t\t\t\t{Array.from(display).map((char, col) => {\n\t\t\t\t\t\t\t\t\t\tconst state = states[col] ?? \"pending\";\n\t\t\t\t\t\t\t\t\t\tconst typed = line.typed[col];\n\t\t\t\t\t\t\t\t\t\tconst shown =\n\t\t\t\t\t\t\t\t\t\t\tstate === \"incorrect\" &&\n\t\t\t\t\t\t\t\t\t\t\t!config.blindMode &&\n\t\t\t\t\t\t\t\t\t\t\ttyped !== undefined &&\n\t\t\t\t\t\t\t\t\t\t\tchar !== \" \"\n\t\t\t\t\t\t\t\t\t\t\t\t? typed\n\t\t\t\t\t\t\t\t\t\t\t\t: char;\n\t\t\t\t\t\t\t\t\t\treturn (\n\t\t\t\t\t\t\t\t\t\t\t<span\n\t\t\t\t\t\t\t\t\t\t\t\tclassName={cn(\"char\", state, char === \" \" && \"space\")}\n\t\t\t\t\t\t\t\t\t\t\t\t// biome-ignore lint/suspicious/noArrayIndexKey: characters are positional\n\t\t\t\t\t\t\t\t\t\t\t\tkey={col}\n\t\t\t\t\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t\t\t\t\t{shown === \" \" && state === \"incorrect\" ? \" \" : shown}\n\t\t\t\t\t\t\t\t\t\t\t</span>\n\t\t\t\t\t\t\t\t\t\t);\n\t\t\t\t\t\t\t\t\t})}",
+          "note": "One span per character, classed by the engine's charStates; a wrong key shows what was typed unless blind mode is on."
+        }
+      ],
+      "related": [
+        "state-management/typing-engine",
+        "state-management/typing-engine/line-progress",
+        "ui-components/theme-engine",
+        "ui-components/command-palette"
+      ],
+      "custom": false
+    },
+    {
+      "id": "ui-components/command-palette",
+      "title": "Command palette driven by the settings list",
+      "summary": "Esc or ctrl+shift+p opens a cmdk palette whose entries are generated from the same settings definitions as the settings page; themes preview on hover.",
+      "explanation": "**What problem it solves.** Keyboard-first users do not want to leave the test to change the language or theme. Monkeytype's answer is a command line; copying it means dozens of commands that must stay in sync with the settings page.\n\n**How it works here.** `apps/web/src/lib/settings.ts` is the single source of truth: an array of setting definitions with key, title, section and options. `CommandPalette` in `apps/web/src/components/command-palette.tsx` maps that array into cmdk items, so adding a setting there adds it to both the settings page and the palette. The palette's state is a small discriminated union in `ui-store.ts`: `root`, `setting`, `theme`, `language` or `algorithm`, and `PaletteBody` switches on it; Backspace on an empty search goes back to root. Two shortcuts open it: a window-level `ctrl/cmd+shift+p` listener, and Escape inside the typing input, unless `quickRestart` is set to `esc`, in which case Escape restarts the test instead. Hovering a theme calls `applyTheme` immediately as a preview and `restore` puts the saved theme back when the pointer leaves or the dialog closes; choosing commits through `setConfig`, which then syncs to the server.\n\n**What breaks without it.** Every setting would need two UIs maintained by hand, and the palette would silently miss new options.\n\n**Why this choice.** Generating UI from data keeps the two surfaces identical for free; cmdk supplies fuzzy search and keyboard navigation.",
+      "code": [
+        {
+          "file": "apps/web/src/components/command-palette.tsx",
+          "lang": "tsx",
+          "lines": "386-404",
+          "snippet": "\t// Global shortcut: ctrl/cmd + shift + p\n\tuseEffect(() => {\n\t\tconst handler = (event: KeyboardEvent) => {\n\t\t\tif (\n\t\t\t\t(event.ctrlKey || event.metaKey) &&\n\t\t\t\tevent.shiftKey &&\n\t\t\t\tevent.key.toLowerCase() === \"p\"\n\t\t\t) {\n\t\t\t\tevent.preventDefault();\n\t\t\t\tif (open) {\n\t\t\t\t\tclosePalette();\n\t\t\t\t} else {\n\t\t\t\t\topenPalette();\n\t\t\t\t}\n\t\t\t}\n\t\t};\n\t\twindow.addEventListener(\"keydown\", handler);\n\t\treturn () => window.removeEventListener(\"keydown\", handler);\n\t}, [open, openPalette, closePalette]);",
+          "note": "The global shortcut toggles the palette from anywhere in the app."
+        },
+        {
+          "file": "apps/web/src/hooks/use-typing-test.ts",
+          "lang": "ts",
+          "lines": "240-262",
+          "snippet": "/** Handles tab/esc shortcuts. Returns true when the key was consumed. */\nfunction handleShortcut(\n\tevent: React.KeyboardEvent<HTMLInputElement>,\n\tquickRestart: UserConfig[\"quickRestart\"],\n\tnextTest: () => void,\n\topenPalette: () => void\n): boolean {\n\tif (event.key === \"Tab\" && quickRestart === \"tab\") {\n\t\tevent.preventDefault();\n\t\tnextTest();\n\t\treturn true;\n\t}\n\tif (event.key === \"Escape\") {\n\t\tevent.preventDefault();\n\t\tif (quickRestart === \"esc\") {\n\t\t\tnextTest();\n\t\t} else {\n\t\t\topenPalette();\n\t\t}\n\t\treturn true;\n\t}\n\treturn false;\n}",
+          "note": "Inside the test, Escape either restarts or opens the palette depending on the quick-restart setting."
+        },
+        {
+          "file": "apps/web/src/components/command-palette.tsx",
+          "lang": "tsx",
+          "lines": "272-285",
+          "snippet": "\t\t\t<CommandGroup heading=\"settings\">\n\t\t\t\t{SETTINGS.map((setting) => (\n\t\t\t\t\t<CommandItem\n\t\t\t\t\t\tkey={setting.key}\n\t\t\t\t\t\tonSelect={() => setView({ type: \"setting\", key: setting.key })}\n\t\t\t\t\t\tvalue={`${setting.title} ${setting.section}`}\n\t\t\t\t\t>\n\t\t\t\t\t\t<span className=\"flex-1\">{setting.title}</span>\n\t\t\t\t\t\t<span className=\"text-sub text-xs\">\n\t\t\t\t\t\t\t{optionLabel(setting, config[setting.key])}\n\t\t\t\t\t\t</span>\n\t\t\t\t\t</CommandItem>\n\t\t\t\t))}\n\t\t\t</CommandGroup>",
+          "note": "Every setting definition becomes a palette entry showing its current value."
+        },
+        {
+          "file": "apps/web/src/components/command-palette.tsx",
+          "lang": "tsx",
+          "lines": "406-424",
+          "snippet": "\tconst restore = () => {\n\t\tif (previewing.current) {\n\t\t\tapplyTheme(config.theme);\n\t\t\tpreviewing.current = false;\n\t\t}\n\t};\n\tconst preview = (name: string) => {\n\t\tpreviewing.current = true;\n\t\tapplyTheme(name);\n\t};\n\tconst close = () => {\n\t\trestore();\n\t\tclosePalette();\n\t};\n\tconst choose: Choose = (key, value) => {\n\t\tpreviewing.current = false;\n\t\tsetConfig(key, value);\n\t\tclosePalette();\n\t};",
+          "note": "Preview applies a theme without saving; choose saves and closes; restore undoes a preview."
+        },
+        {
+          "file": "apps/web/src/store/ui-store.ts",
+          "lang": "ts",
+          "lines": "3-18",
+          "snippet": "export type PaletteView =\n\t| { type: \"root\" }\n\t| { type: \"setting\"; key: string }\n\t| { type: \"theme\" }\n\t| { type: \"language\" }\n\t| { type: \"algorithm\" };\n\ninterface UIState {\n\tpaletteOpen: boolean;\n\tpaletteView: PaletteView;\n\topenPalette: (view?: PaletteView) => void;\n\tclosePalette: () => void;\n\tsetPaletteView: (view: PaletteView) => void;\n\texplainOpen: boolean;\n\tsetExplainOpen: (open: boolean) => void;\n}",
+          "note": "The palette's view is a tagged union, so each screen is one case in a switch."
+        }
+      ],
+      "related": [
+        "ui-components/theme-engine",
+        "state-management/zustand-stores",
+        "programming-languages/discriminated-unions"
+      ],
+      "custom": false
+    },
+    {
+      "id": "ui-components/theme-engine",
+      "title": "190 themes as ten CSS variables",
+      "summary": "A theme is ten colours written onto the root element at runtime; Tailwind utilities, the caret, charts and diagrams all read those variables.",
+      "explanation": "**What problem it solves.** Monkeytype's appeal includes its huge theme library. Shipping 190 stylesheets or re-rendering React on every theme change would be slow; the colours need to change in one place and propagate everywhere, including into third-party renderers like mermaid.\n\n**How it works here.** Each theme in `apps/web/src/themes` is an object with ten colours (`bg`, `main`, `caret`, `sub`, `text`, `error`, ...). `applyTheme` in `apps/web/src/lib/theme.ts` writes them as `--bg-color`, `--main-color` and so on with `style.setProperty` on `<html>`, sets `color-scheme` to light or dark so native controls match, stamps `data-theme`, and updates the `theme-color` meta tag for the mobile browser chrome. `apps/web/src/index.css` maps those variables into Tailwind v4 tokens inside `@theme inline`, so utilities such as `text-main` and `bg-sub-alt` work without any extra configuration. `useApplyAppearance` runs `applyTheme` whenever the config's theme changes and also sets `--test-font` and `--test-font-size`. `randomThemeName` powers the random-theme setting, optionally restricted to light or dark palettes, and is called after every finished test when enabled. Mermaid diagrams read the same variables at render time.\n\n**What breaks without it.** Theme switches would require a re-render of every component, and shadcn components would ignore the active palette.\n\n**Why this choice.** CSS variables are the browser's own theming mechanism: one write, zero React work.",
+      "code": [
+        {
+          "file": "apps/web/src/lib/theme.ts",
+          "lang": "ts",
+          "lines": "3-32",
+          "snippet": "const VARIABLES: Record<keyof Theme, string> = {\n\tbg: \"--bg-color\",\n\tmain: \"--main-color\",\n\tcaret: \"--caret-color\",\n\tsub: \"--sub-color\",\n\tsubAlt: \"--sub-alt-color\",\n\ttext: \"--text-color\",\n\terror: \"--error-color\",\n\terrorExtra: \"--error-extra-color\",\n\tcolorfulError: \"--colorful-error-color\",\n\tcolorfulErrorExtra: \"--colorful-error-extra-color\",\n};\n\nexport function getTheme(name: string): Theme {\n\treturn THEMES[name] ?? (THEMES.bushido as Theme);\n}\n\nexport function applyTheme(name: string) {\n\tconst theme = getTheme(name);\n\tconst root = document.documentElement;\n\tfor (const [key, variable] of Object.entries(VARIABLES)) {\n\t\troot.style.setProperty(variable, theme[key as keyof Theme]);\n\t}\n\troot.style.colorScheme = isLightTheme(theme) ? \"light\" : \"dark\";\n\troot.dataset.theme = name;\n\tconst meta = document.querySelector('meta[name=\"theme-color\"]');\n\tif (meta) {\n\t\tmeta.setAttribute(\"content\", theme.bg);\n\t}\n}",
+          "note": "Ten colours become ten variables on the root; lines 26-30 keep native controls and the browser chrome in step."
+        },
+        {
+          "file": "apps/web/src/index.css",
+          "lang": "css",
+          "lines": "65-74",
+          "snippet": "@theme inline {\n\t--font-mono: var(--font-geist);\n\t--color-main: var(--main-color);\n\t--color-sub: var(--sub-color);\n\t--color-sub-alt: var(--sub-alt-color);\n\t--color-text: var(--text-color);\n\t--color-bg: var(--bg-color);\n\t--color-caret: var(--caret-color);\n\t--color-error: var(--error-color);\n\t--color-error-extra: var(--error-extra-color);",
+          "note": "Tailwind v4 tokens are aliases of the runtime variables, so text-main follows the theme."
+        },
+        {
+          "file": "apps/web/src/hooks/use-theme.ts",
+          "lang": "ts",
+          "lines": "12-30",
+          "snippet": "/** Applies theme, font family and font size from the config to the document. */\nexport function useApplyAppearance() {\n\tconst theme = useConfigStore((s) => s.config.theme);\n\tconst fontFamily = useConfigStore((s) => s.config.fontFamily);\n\tconst fontSize = useConfigStore((s) => s.config.fontSize);\n\n\tuseEffect(() => {\n\t\tapplyTheme(theme);\n\t}, [theme]);\n\n\tuseEffect(() => {\n\t\tconst root = document.documentElement;\n\t\troot.style.setProperty(\n\t\t\t\"--test-font\",\n\t\t\tFONT_VARS[fontFamily] ?? FONT_VARS[\"geist-mono\"] ?? \"\"\n\t\t);\n\t\troot.style.setProperty(\"--test-font-size\", `${fontSize}rem`);\n\t}, [fontFamily, fontSize]);\n}",
+          "note": "Theme, font family and font size are applied from config in two effects."
+        },
+        {
+          "file": "apps/web/src/lib/theme.ts",
+          "lang": "ts",
+          "lines": "34-49",
+          "snippet": "export function randomThemeName(\n\tmode: \"on\" | \"light\" | \"dark\",\n\texclude?: string\n): string {\n\tconst pool = THEME_NAMES.filter((name) => {\n\t\tif (name === exclude) {\n\t\t\treturn false;\n\t\t}\n\t\tif (mode === \"on\") {\n\t\t\treturn true;\n\t\t}\n\t\tconst light = isLightTheme(getTheme(name));\n\t\treturn mode === \"light\" ? light : !light;\n\t});\n\treturn pool[Math.floor(Math.random() * pool.length)] ?? \"bushido\";\n}",
+          "note": "Random theme picks from the pool, optionally light-only or dark-only, never repeating the current one."
+        }
+      ],
+      "related": [
+        "ui-components/command-palette",
+        "ui-components/explanations-with-mermaid",
+        "ui-components/typing-area"
+      ],
+      "custom": false
+    },
+    {
+      "id": "ui-components/explanations-with-mermaid",
+      "title": "Markdown explanations with themed, lazy-loaded diagrams",
+      "summary": "Each algorithm's explanation is markdown from the database; a mermaid code fence becomes a flow chart drawn in the current theme, and mermaid loads only when needed.",
+      "explanation": "**What problem it solves.** Typing bubble sort is more useful if you can read how it works. The explanations are written once per algorithm in markdown with a flowchart, and the app must render them safely and without shipping a 1 MB diagram library to people who only came to type.\n\n**How it works here.** `GET /algorithms/:slug` returns the markdown that `seedContent` stored in the `algorithms.explanation` column. `ExplanationMarkdown` in `apps/web/src/components/explanation/explanation-markdown.tsx` renders it with `react-markdown` and `remark-gfm` (tables for the complexity section), mapping each element to a styled component. Its `Code` component checks for `language-mermaid` and hands the block to `MermaidDiagram`. That component `await import(\"mermaid\")` inside an effect, so the library downloads on first use; `vite.config.ts` also puts mermaid and recharts into their own chunks so the main bundle stays small. Before rendering it reads the live CSS variables and passes them as mermaid `themeVariables`, and it re-renders when the theme changes. `securityLevel: \"strict\"` stops diagram text from injecting HTML. The content tests require every explanation to have the same headings and exactly one mermaid block.\n\n**What breaks without it.** Every visitor would download mermaid up front, and diagrams would be drawn in mermaid's default blue on a dark theme.\n\n**Why this choice.** Markdown keeps authoring simple and reviewable in git; the lazy import keeps the typing page fast.",
+      "code": [
+        {
+          "file": "apps/web/src/components/explanation/explanation-markdown.tsx",
+          "lang": "tsx",
+          "lines": "17-38",
+          "snippet": "function Code({ className, children, ...props }: CodeProps) {\n\tconst text = String(children ?? \"\").replace(TRAILING_NEWLINE, \"\");\n\tif (className?.includes(\"language-mermaid\")) {\n\t\treturn <MermaidDiagram chart={text} />;\n\t}\n\tconst inline = !className;\n\tif (inline) {\n\t\treturn (\n\t\t\t<code\n\t\t\t\tclassName=\"rounded bg-sub-alt px-1 py-0.5 text-main text-sm\"\n\t\t\t\t{...props}\n\t\t\t>\n\t\t\t\t{children}\n\t\t\t</code>\n\t\t);\n\t}\n\treturn (\n\t\t<code className={className} {...props}>\n\t\t\t{children}\n\t\t</code>\n\t);\n}",
+          "note": "A fenced block tagged mermaid becomes a diagram component; other code stays as code."
+        },
+        {
+          "file": "apps/web/src/components/explanation/mermaid-diagram.tsx",
+          "lang": "tsx",
+          "lines": "19-49",
+          "snippet": "\tuseEffect(() => {\n\t\tlet cancelled = false;\n\t\tconst render = async () => {\n\t\t\tconst { default: mermaid } = await import(\"mermaid\");\n\t\t\tconst styles = getComputedStyle(document.documentElement);\n\t\t\tconst read = (name: string) => styles.getPropertyValue(name).trim();\n\t\t\tmermaid.initialize({\n\t\t\t\tstartOnLoad: false,\n\t\t\t\tsecurityLevel: \"strict\",\n\t\t\t\ttheme: \"base\",\n\t\t\t\tfontFamily: \"inherit\",\n\t\t\t\tthemeVariables: {\n\t\t\t\t\tbackground: read(\"--bg-color\"),\n\t\t\t\t\tprimaryColor: read(\"--sub-alt-color\"),\n\t\t\t\t\tprimaryTextColor: read(\"--text-color\"),\n\t\t\t\t\tprimaryBorderColor: read(\"--main-color\"),\n\t\t\t\t\tlineColor: read(\"--sub-color\"),\n\t\t\t\t\tsecondaryColor: read(\"--sub-alt-color\"),\n\t\t\t\t\ttertiaryColor: read(\"--bg-color\"),\n\t\t\t\t\tedgeLabelBackground: read(\"--bg-color\"),\n\t\t\t\t\tfontSize: \"14px\",\n\t\t\t\t},\n\t\t\t});\n\t\t\ttry {\n\t\t\t\trenderCounter += 1;\n\t\t\t\tconst { svg } = await mermaid.render(\n\t\t\t\t\t`mermaid-${id}-${renderCounter}`,\n\t\t\t\t\tchart\n\t\t\t\t);\n\t\t\t\tif (!cancelled && ref.current) {\n\t\t\t\t\tref.current.innerHTML = svg;",
+          "note": "Dynamic import on line 22, theme colours read from CSS variables on lines 23-40, strict security on line 27."
+        },
+        {
+          "file": "apps/web/vite.config.ts",
+          "lang": "ts",
+          "lines": "21-30",
+          "snippet": "\tbuild: {\n\t\trollupOptions: {\n\t\t\toutput: {\n\t\t\t\tmanualChunks: {\n\t\t\t\t\tmermaid: [\"mermaid\"],\n\t\t\t\t\tcharts: [\"recharts\"],\n\t\t\t\t},\n\t\t\t},\n\t\t},\n\t},",
+          "note": "Heavy libraries are split into separate chunks so the typing page does not pay for them."
+        },
+        {
+          "file": "packages/algorithms/CONTENT.md",
+          "lang": "md",
+          "lines": "55-70",
+          "snippet": "Required structure, in this order:\n\n```\n# <Algorithm name exactly as in src/catalog.ts>\n\n## Overview\nOne or two short paragraphs in plain English.\n\n## How it works\nA numbered list of steps.\n\n## Flow\nA single ```mermaid fenced block with a `flowchart TD` diagram of the\nalgorithm's control flow. Quote node labels that contain brackets or\nspecial characters, e.g. H{\"arr[j] > arr[j+1]?\"}.\n",
+          "note": "The authoring contract every explanation file follows, enforced by the content tests."
+        }
+      ],
+      "related": [
+        "ui-components/theme-engine",
+        "database/content-seeding",
+        "testing/content-and-route-tests"
+      ],
+      "custom": false
+    },
+    {
+      "id": "testing/engine-unit-tests",
+      "title": "Deterministic engine tests with fake clocks",
+      "summary": "Because the engine is pure, tests type strings with controlled timestamps and assert exact wpm, accuracy and line positions without a browser.",
+      "explanation": "**What problem it solves.** The rules for backspace, auto indent, expert mode and newline scoring are exactly the kind of logic that silently regresses. Testing them through a browser would be slow and flaky; the engine's design makes them unit-testable.\n\n**How it works here.** `packages/typing-engine/test/engine.test.ts` runs under `bun test`. A tiny `typeText` helper feeds a string one `applyKey` at a time, turning `\\n` into Enter events and advancing a fake clock by 100 ms per key. Because time is an argument rather than `Date.now()`, the stats test can assert `durationMs` is exactly 2600 and that wpm equals `wpmFromChars(27, 2600)` for 26 characters plus one newline with the four-space indent excluded. Other tests pin each rule in a few lines: expert fails on a wrong line, master fails on a wrong key, backspace cannot eat auto-indented spaces, a previous line can be re-opened only if it had errors, extra characters are capped at 20 per line, and a finished test returns the very same state object for further input. The `kogasa` test checks that zero variation maps to 100 consistency.\n\n**What breaks without it.** A change to `applyBackspace` could let players delete into correct lines, or a scoring tweak could quietly inflate everyone's wpm.\n\n**Why this choice.** Pure functions plus explicit time make the tests tiny, fast and exact, which is why there are so many of them.",
+      "code": [
+        {
+          "file": "packages/typing-engine/test/engine.test.ts",
+          "lang": "ts",
+          "lines": "15-33",
+          "snippet": "const SNIPPET = \"def add(a, b):\\n    return a + b\\n\";\n\n/** Types a string character by character, using Enter for newlines. */\nfunction typeText(\n\tstate: TestState,\n\ttext: string,\n\tstartTime = 0,\n\tmsPerKey = 100\n): TestState {\n\tlet next = state;\n\tlet time = startTime;\n\tfor (const char of text) {\n\t\tconst event: KeyEvent =\n\t\t\tchar === \"\\n\" ? { type: \"enter\", time } : { type: \"char\", char, time };\n\t\tnext = applyKey(next, event);\n\t\ttime += msPerKey;\n\t}\n\treturn next;\n}",
+          "note": "The helper that turns a string into timed key events; every test builds on it."
+        },
+        {
+          "file": "packages/typing-engine/test/engine.test.ts",
+          "lang": "ts",
+          "lines": "115-126",
+          "snippet": "\ttest(\"expert difficulty fails on an incorrect line\", () => {\n\t\tconst state = typeText(\n\t\t\tcreateTest(SNIPPET, { difficulty: \"expert\" }),\n\t\t\t\"def add(a, b);\\n\"\n\t\t);\n\t\texpect(state.status).toBe(\"failed\");\n\t});\n\n\ttest(\"master difficulty fails on any incorrect key\", () => {\n\t\tconst state = typeText(createTest(SNIPPET, { difficulty: \"master\" }), \"x\");\n\t\texpect(state.status).toBe(\"failed\");\n\t});",
+          "note": "Difficulty rules pinned in two short tests."
+        },
+        {
+          "file": "packages/typing-engine/test/engine.test.ts",
+          "lang": "ts",
+          "lines": "194-208",
+          "snippet": "describe(\"computeStats\", () => {\n\ttest(\"computes wpm from correct characters including newlines\", () => {\n\t\t// 27 keystrokes at 100ms each: last key at 2600ms.\n\t\tconst state = typeText(createTest(SNIPPET), \"def add(a, b):\\nreturn a + b\");\n\t\tconst stats = computeStats(state);\n\t\texpect(stats.durationMs).toBe(2600);\n\t\t// 26 chars + 1 newline, skipped indent not counted.\n\t\texpect(stats.chars.correct).toBe(26);\n\t\texpect(stats.chars.newlines).toBe(1);\n\t\texpect(stats.chars.skipped).toBe(4);\n\t\texpect(stats.wpm).toBe(Number(wpmFromChars(27, 2600).toFixed(2)));\n\t\texpect(stats.raw).toBe(stats.wpm);\n\t\texpect(stats.accuracy).toBe(100);\n\t\texpect(stats.chart.length).toBe(3);\n\t});",
+          "note": "Exact numbers: duration, counts and wpm are asserted, not approximated."
+        },
+        {
+          "file": "packages/typing-engine/test/engine.test.ts",
+          "lang": "ts",
+          "lines": "175-184",
+          "snippet": "\ttest(\"ignores input once finished\", () => {\n\t\tconst finished = typeText(createTest(\"ab\"), \"ab\");\n\t\tconst after = applyKey(finished, { type: \"char\", char: \"c\", time: 999 });\n\t\texpect(after).toBe(finished);\n\t});\n\n\ttest(\"caps extra characters per line\", () => {\n\t\tconst state = typeText(createTest(\"ab\\ncd\"), \"ab\".padEnd(40, \"x\"));\n\t\texpect(state.lines[0]?.typed.length).toBe(22);\n\t});",
+          "note": "Edge cases: input after finishing is ignored, and extra characters per line are capped."
+        }
+      ],
+      "related": [
+        "state-management/typing-engine",
+        "state-management/typing-engine/stats",
+        "testing/content-and-route-tests"
+      ],
+      "custom": false
+    },
+    {
+      "id": "testing/content-and-route-tests",
+      "title": "Generated content tests and database-gated route tests",
+      "summary": "One test per language per algorithm checks every snippet file; route tests hit the Hono app in-process and skip themselves when no database is available.",
+      "explanation": "**What problem it solves.** With 31 algorithms in 12 languages there are 372 snippet files. A tab character or a 70-character line in any one of them would make that test impossible to pass for players. And API tests need Postgres, which a contributor's laptop may not have.\n\n**How it works here.** `packages/algorithms/test/content.test.ts` loops over `LANGUAGES` and `ALGORITHMS` and registers a named test for each pair, so a failure says exactly which file broke and why (`snippetProblems` returns a list of human-readable problems). Explanations are checked for the required headings, a mermaid block and a trailing newline, and the loader test asserts the counts match the catalog, so a forgotten file fails. In `apps/server/test/app.test.ts`, `describeWithDb` is `describe` when `DATABASE_URL` is set and `describe.skip` otherwise; inside, the test runs migrations and the seeder, then calls `app.request(...)` directly, no port, no network, asserting status codes for languages, a random Go sorting snippet, the leaderboard, a 401 on unauthenticated submission and a 404. `rate-limit.test.ts` does the same against a throwaway Hono app. `turbo test` runs every workspace's tests, and the husky pre-commit hook runs `bun test` before each commit.\n\n**What breaks without it.** Broken content would reach the database on the next deploy, since seeding is automatic.\n\n**Why this choice.** Generating tests from data means coverage grows with the catalog without anyone writing a new test.",
+      "code": [
+        {
+          "file": "packages/algorithms/test/content.test.ts",
+          "lang": "ts",
+          "lines": "28-39",
+          "snippet": "describe(\"snippets\", () => {\n\tfor (const language of LANGUAGES) {\n\t\tfor (const algorithm of ALGORITHMS) {\n\t\t\ttest(`${language.id}/${algorithm.slug}`, async () => {\n\t\t\t\tconst path = snippetPath(language.id, algorithm.slug);\n\t\t\t\tconst code = await readFile(path, \"utf8\");\n\t\t\t\tconst problems = snippetProblems(code, language.indent);\n\t\t\t\texpect(problems, `${path}:\\n  ${problems.join(\"\\n  \")}`).toEqual([]);\n\t\t\t});\n\t\t}\n\t}\n});",
+          "note": "A test per file, named by language and slug, with the problem list in the assertion message."
+        },
+        {
+          "file": "packages/algorithms/test/content.test.ts",
+          "lang": "ts",
+          "lines": "41-54",
+          "snippet": "describe(\"explanations\", () => {\n\tfor (const algorithm of ALGORITHMS) {\n\t\ttest(algorithm.slug, async () => {\n\t\t\tconst markdown = await readFile(explanationPath(algorithm.slug), \"utf8\");\n\t\t\texpect(markdown.startsWith(`# ${algorithm.name}`)).toBe(true);\n\t\t\tfor (const heading of REQUIRED_EXPLANATION_HEADINGS) {\n\t\t\t\texpect(markdown, `missing ${heading}`).toContain(`\\n${heading}\\n`);\n\t\t\t}\n\t\t\texpect(markdown).toContain(\"```mermaid\\n\");\n\t\t\texpect(markdown).not.toContain(\"\\t\");\n\t\t\texpect(markdown.endsWith(\"\\n\")).toBe(true);\n\t\t});\n\t}\n});",
+          "note": "Every explanation must carry the same structure and a diagram."
+        },
+        {
+          "file": "apps/server/test/app.test.ts",
+          "lang": "ts",
+          "lines": "3-15",
+          "snippet": "/**\n * Route-level tests run against a real Postgres database when TEST_DATABASE_URL\n * (or DATABASE_URL) is set, and are skipped otherwise so `bun test` stays green\n * on machines without a database.\n */\nconst databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;\nconst describeWithDb = databaseUrl ? describe : describe.skip;\n\ndescribeWithDb(\"api routes\", () => {\n\tprocess.env.DATABASE_URL = databaseUrl;\n\tprocess.env.BETTER_AUTH_SECRET ??= \"<redacted>\";\n\tprocess.env.BETTER_AUTH_URL ??= \"http://localhost:9797\";\n\tprocess.env.SEED_ON_START = \"false\";",
+          "note": "The whole suite becomes describe.skip when there is no database."
+        },
+        {
+          "file": "apps/server/test/app.test.ts",
+          "lang": "ts",
+          "lines": "63-77",
+          "snippet": "\t\tconst leaderboard = await app.request(\n\t\t\t\"/api/v1/leaderboards?language=python\"\n\t\t);\n\t\texpect(leaderboard.status).toBe(200);\n\n\t\tconst unauthorized = await app.request(\"/api/v1/results\", {\n\t\t\tmethod: \"POST\",\n\t\t\tbody: JSON.stringify({}),\n\t\t\theaders: { \"Content-Type\": \"application/json\" },\n\t\t});\n\t\texpect(unauthorized.status).toBe(401);\n\n\t\tconst missing = await app.request(\"/api/v1/nope\");\n\t\texpect(missing.status).toBe(404);\n\t});",
+          "note": "In-process requests through app.request: no server, no port."
+        },
+        {
+          "file": "apps/server/test/rate-limit.test.ts",
+          "lang": "ts",
+          "lines": "18-39",
+          "snippet": "describe(\"rateLimit middleware\", () => {\n\ttest(\"returns 429 with Retry-After once the limit is exceeded\", async () => {\n\t\tconst app = new Hono();\n\t\tapp.use(\"*\", rateLimit({ name: \"t\", windowMs: 60_000, max: 2 }));\n\t\tapp.get(\"/\", (c) => c.text(\"ok\"));\n\t\tconst headers = { \"x-forwarded-for\": \"203.0.113.5\" };\n\n\t\tconst first = await app.request(\"/\", { headers });\n\t\texpect(first.status).toBe(200);\n\t\texpect(first.headers.get(\"RateLimit-Remaining\")).toBe(\"1\");\n\t\tawait app.request(\"/\", { headers });\n\t\tconst third = await app.request(\"/\", { headers });\n\t\texpect(third.status).toBe(429);\n\t\texpect(Number(third.headers.get(\"Retry-After\"))).toBeGreaterThan(0);\n\t\tconst body = (await third.json()) as { error: { code: string } };\n\t\texpect(body.error.code).toBe(\"RATE_LIMITED\");\n\n\t\tconst other = await app.request(\"/\", {\n\t\t\theaders: { \"x-forwarded-for\": \"203.0.113.6\" },\n\t\t});\n\t\texpect(other.status).toBe(200);\n\t});",
+          "note": "Middleware tested on a throwaway Hono app with a forged forwarded-for header."
+        }
+      ],
+      "related": [
+        "database/content-seeding",
+        "testing/engine-unit-tests",
+        "tooling/turborepo-bun-workspaces"
+      ],
+      "custom": false
+    },
+    {
+      "id": "devops/docker-image",
+      "title": "One multi-stage image with a real health check",
+      "summary": "Dependencies, web build and runtime are separate stages; the final image has production packages only, runs as non-root and reports health through the API.",
+      "explanation": "**What problem it solves.** The deploy target is a small VPS running Dokploy. It needs one artifact that contains the API and the built web app, rebuilds fast when only source changed, and tells the platform when it is actually ready rather than merely started.\n\n**How it works here.** The `Dockerfile` has three stages. `deps` copies only the lockfile and every workspace `package.json`, then `bun install --frozen-lockfile`, so the dependency layer is cached until a dependency changes. `build` copies the source and runs the Vite build with an empty `VITE_SERVER_URL`. `runtime` installs production dependencies only, copies the packages, the server source and the web `dist`, sets non-secret defaults, drops to the `bun` user and runs the server straight from TypeScript. The `HEALTHCHECK` fetches `/api/v1/health`, which `packages/health/service.ts` answers with 200 only if `select 1` succeeds against Postgres, otherwise 503; Docker and Dokploy use that to decide readiness and restarts. `docker-compose.yml` adds a Postgres service with `pg_isready` and makes the app `depends_on` it being healthy. A request-logging middleware in `app.ts` records method, path, status and duration with pino, warning on anything over a second, which is what you read when the health check flips.\n\n**What breaks without it.** Every code change would reinstall dependencies, and a container with a dead database would look healthy.\n\n**Why this choice.** Bun runs TypeScript directly, so the runtime stage needs no compile step and the image stays simple.",
+      "code": [
+        {
+          "file": "Dockerfile",
+          "lang": "dockerfile",
+          "lines": "10-24",
+          "snippet": "# ── Install dependencies (cached by lockfile) ───────────────────────────────\nFROM base AS deps\nCOPY package.json bun.lock ./\nCOPY apps/server/package.json apps/server/\nCOPY apps/web/package.json apps/web/\nCOPY packages/algorithms/package.json packages/algorithms/\nCOPY packages/auth/package.json packages/auth/\nCOPY packages/config/package.json packages/config/\nCOPY packages/core/package.json packages/core/\nCOPY packages/db/package.json packages/db/\nCOPY packages/env/package.json packages/env/\nCOPY packages/health/package.json packages/health/\nCOPY packages/shared/package.json packages/shared/\nCOPY packages/typing-engine/package.json packages/typing-engine/\nRUN bun install --frozen-lockfile --ignore-scripts",
+          "note": "Only manifests are copied before install, so the dependency layer survives source changes."
+        },
+        {
+          "file": "Dockerfile",
+          "lang": "dockerfile",
+          "lines": "35-67",
+          "snippet": "FROM base AS runtime\nENV NODE_ENV=production \\\n    PORT=3000 \\\n    WEB_DIST_DIR=/app/apps/web/dist \\\n    RUN_MIGRATIONS_ON_START=true \\\n    SEED_ON_START=true\n\n# Production dependencies only (no vite, react, mermaid... in the runtime image)\nCOPY package.json bun.lock ./\nCOPY apps/server/package.json apps/server/\nCOPY apps/web/package.json apps/web/\nCOPY packages/algorithms/package.json packages/algorithms/\nCOPY packages/auth/package.json packages/auth/\nCOPY packages/config/package.json packages/config/\nCOPY packages/core/package.json packages/core/\nCOPY packages/db/package.json packages/db/\nCOPY packages/env/package.json packages/env/\nCOPY packages/health/package.json packages/health/\nCOPY packages/shared/package.json packages/shared/\nCOPY packages/typing-engine/package.json packages/typing-engine/\nRUN bun install --frozen-lockfile --production --ignore-scripts \\\n    && rm -rf ~/.bun/install/cache\n\nCOPY --from=build /app/packages ./packages\nCOPY --from=build /app/apps/server ./apps/server\nCOPY --from=build /app/apps/web/dist ./apps/web/dist\n\nEXPOSE 3000\nHEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \\\n  CMD wget -qO- http://127.0.0.1:${PORT}/api/v1/health || exit 1\n\nUSER bun\nCMD [\"bun\", \"run\", \"apps/server/src/index.ts\"]",
+          "note": "Production-only install, non-root user, and a health check that hits the real API."
+        },
+        {
+          "file": "docker-compose.yml",
+          "lang": "yaml",
+          "lines": "8-30",
+          "snippet": "  db:\n    image: postgres:17-alpine\n    restart: unless-stopped\n    environment:\n      POSTGRES_DB: ${POSTGRES_DB:-typeninja}\n      POSTGRES_USER: ${POSTGRES_USER:-typeninja}\n      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}\n    volumes:\n      - typeninja-db:/var/lib/postgresql/data\n    healthcheck:\n      test: [\"CMD-SHELL\", \"pg_isready -U ${POSTGRES_USER:-typeninja} -d ${POSTGRES_DB:-typeninja}\"]\n      interval: 10s\n      timeout: 5s\n      retries: 10\n\n  app:\n    build:\n      context: .\n      dockerfile: Dockerfile\n    restart: unless-stopped\n    depends_on:\n      db:\n        condition: service_healthy",
+          "note": "Postgres is only considered up when pg_isready passes; the app waits for that."
+        },
+        {
+          "file": "packages/health/service.ts",
+          "lang": "ts",
+          "lines": "4-19",
+          "snippet": "export async function getHealth(): Promise<HealthResult> {\n\tconst database = await checkDatabase();\n\tconst services = { database };\n\tconst criticalDown = Object.values(services).some((s) => s.status === \"down\");\n\n\treturn {\n\t\thealthy: !criticalDown,\n\t\tstatus: criticalDown ? \"degraded\" : \"ok\",\n\t\ttimestamp: new Date().toISOString(),\n\t\tservices,\n\t\tmeta: {\n\t\t\tuptimeSec: Math.round(process.uptime()),\n\t\t\tenv: process.env.NODE_ENV ?? \"development\",\n\t\t},\n\t};\n}",
+          "note": "Healthy means the database answered; the status code follows from it."
+        },
+        {
+          "file": "apps/server/src/app.ts",
+          "lang": "ts",
+          "lines": "16-27",
+          "snippet": "const SLOW_REQUEST_MS = 1000;\n\napp.use(\"/api/*\", async (c, next) => {\n\tconst start = Date.now();\n\tawait next();\n\tconst duration = Date.now() - start;\n\tconst level = duration > SLOW_REQUEST_MS ? \"warn\" : \"debug\";\n\tlogger[level](\n\t\t{ method: c.req.method, path: c.req.path, status: c.res.status, duration },\n\t\t\"request\"\n\t);\n});",
+          "note": "Structured request logs with duration, escalating to warn for slow requests."
+        }
+      ],
+      "related": [
+        "system-design/bootstrap-and-shutdown",
+        "networking/same-origin-deploy",
+        "security/validated-env"
+      ],
+      "custom": false
+    },
+    {
+      "id": "tooling/turborepo-bun-workspaces",
+      "title": "Bun workspaces, a version catalog and Turborepo tasks",
+      "summary": "Eleven packages share one lockfile and pinned versions; packages export TypeScript source directly and Turborepo orders builds, type checks and tests.",
+      "explanation": "**What problem it solves.** The engine, the content, the API contracts and the database schema are used by both the server and the web app. Publishing them as npm packages would be absurd; copying files would drift. A monorepo lets them be imported as `@type-ninja/typing-engine` while living in the same repo.\n\n**How it works here.** The root `package.json` declares `apps/*` and `packages/*` as Bun workspaces and a `catalog` of shared versions, so `zod`, `drizzle-orm` and `better-auth` are written as `\"catalog:\"` in each package and bumped in one place. Internal packages depend on each other with `workspace:*`. Each package's `exports` field points at `.ts` files, so there is no per-package build; Bun and Vite consume the source directly and only the server (`tsdown`, bundling the workspace packages in) and the web app (Vite) produce output. `turbo.json` declares the task graph: `build` depends on the dependencies' builds, `test` on `^build`, `dev` is persistent and uncached, and database scripts never cache. Biome (through the `ultracite` preset) formats and lints; `lint-staged` runs it on staged files and the husky `pre-commit` hook also runs `bun test`.\n\n**What breaks without it.** Three copies of the wpm formula, three Zod versions, and a test suite nobody runs before committing.\n\n**Why this choice.** Bun's install is fast enough that the whole monorepo installs in seconds, and the catalog removes the usual \"which zod is this\" confusion.",
+      "code": [
+        {
+          "file": "package.json",
+          "lang": "json",
+          "lines": "3-16",
+          "snippet": "  \"private\": true,\n  \"workspaces\": {\n    \"packages\": [\n      \"apps/*\",\n      \"packages/*\"\n    ],\n    \"catalog\": {\n      \"dotenv\": \"^17.2.4\",\n      \"zod\": \"^4.3.6\",\n      \"typescript\": \"^5.9.3\",\n      \"@types/bun\": \"^1.3.9\",\n      \"better-auth\": \"^1.4.18\",\n      \"drizzle-orm\": \"^0.45.1\"\n    }",
+          "note": "Workspaces plus a catalog of versions every package references with catalog:."
+        },
+        {
+          "file": "turbo.json",
+          "lang": "json",
+          "lines": "4-20",
+          "snippet": "  \"tasks\": {\n    \"build\": {\n      \"dependsOn\": [\"^build\"],\n      \"inputs\": [\"$TURBO_DEFAULT$\", \".env*\"],\n      \"outputs\": [\"dist/**\"]\n    },\n    \"check-types\": {\n      \"dependsOn\": [\"^check-types\"]\n    },\n    \"test\": {\n      \"dependsOn\": [\"^build\"],\n      \"outputs\": []\n    },\n    \"dev\": {\n      \"cache\": false,\n      \"persistent\": true\n    },",
+          "note": "The task graph: builds and tests wait for upstream builds; dev is never cached."
+        },
+        {
+          "file": "packages/algorithms/package.json",
+          "lang": "json",
+          "lines": "6-11",
+          "snippet": "  \"exports\": {\n    \".\": \"./src/index.ts\",\n    \"./catalog\": \"./src/catalog.ts\",\n    \"./languages\": \"./src/languages.ts\",\n    \"./loader\": \"./src/loader.ts\"\n  },",
+          "note": "Exports point at TypeScript source, so there is no build step for internal packages."
+        },
+        {
+          "file": "package.json",
+          "lang": "json",
+          "lines": "44-48",
+          "snippet": "  },\n  \"lint-staged\": {\n    \"*.{js,jsx,ts,tsx,json,jsonc,css,scss,md,mdx}\": [\n      \"bun x ultracite fix\"\n    ]",
+          "note": "Staged files are formatted by Biome through lint-staged on every commit."
+        }
+      ],
+      "related": [
+        "api-design/shared-contracts",
+        "testing/content-and-route-tests",
+        "devops/docker-image"
+      ],
+      "custom": false
+    },
+    {
+      "id": "programming-languages/discriminated-unions",
+      "title": "Tagged unions and types derived from data",
+      "summary": "Key events and palette views are unions with a type tag that TypeScript narrows in a switch; lists like LANGUAGES are declared as const so their ids become types.",
+      "explanation": "**What problem it solves.** An event object with optional `char`, `word` and `time` fields invites bugs: nothing stops you reading `event.char` on a backspace. Likewise a list of languages and a separate `type LanguageId = \"python\" | ...` will drift the first time someone adds Kotlin.\n\n**How it works here.** `KeyEvent` in `packages/typing-engine/src/types.ts` is a union of four object shapes, each with a literal `type`. In `applyKey`, `switch (event.type)` narrows the type in each branch, so `event.char` only exists in the `char` case and the compiler refuses it elsewhere. `PaletteView` in `apps/web/src/store/ui-store.ts` does the same for the command palette's screens, and `PaletteBody` renders one component per case. For data, `LANGUAGES` in `packages/algorithms/src/languages.ts` is declared `as const`; `LanguageId` is then `(typeof LANGUAGES)[number][\"id\"]`, a union computed from the array, and `isLanguageId` is a type guard that narrows a plain string. `packages/shared/src/config.ts` goes one step further and builds Zod enums from those arrays, so runtime validation and compile-time types come from the same list. The base tsconfig turns on `noUncheckedIndexedAccess`, which is why you see `?.` after array lookups throughout the engine.\n\n**What breaks without it.** Adding a fifth key event or a thirteenth language would require hunting for every place that lists them by hand.\n\n**Why this choice.** Letting the compiler derive types from values means there is exactly one place to change.",
+      "code": [
+        {
+          "file": "packages/typing-engine/src/types.ts",
+          "lang": "ts",
+          "lines": "58-62",
+          "snippet": "export type KeyEvent =\n\t| { type: \"char\"; char: string; time: number }\n\t| { type: \"enter\"; time: number }\n\t| { type: \"tab\"; time: number }\n\t| { type: \"backspace\"; word: boolean; time: number };",
+          "note": "Four shapes under one name; the type field is what TypeScript narrows on."
+        },
+        {
+          "file": "apps/web/src/components/command-palette.tsx",
+          "lang": "tsx",
+          "lines": "333-360",
+          "snippet": "\tswitch (view.type) {\n\t\tcase \"theme\":\n\t\t\treturn (\n\t\t\t\t<ThemeView\n\t\t\t\t\tchoose={choose}\n\t\t\t\t\tconfig={config}\n\t\t\t\t\tpreview={preview}\n\t\t\t\t\trestore={restore}\n\t\t\t\t/>\n\t\t\t);\n\t\tcase \"language\":\n\t\t\treturn <LanguageView choose={choose} config={config} />;\n\t\tcase \"algorithm\":\n\t\t\treturn <AlgorithmView choose={choose} config={config} />;\n\t\tcase \"setting\":\n\t\t\treturn (\n\t\t\t\t<SettingView choose={choose} config={config} settingKey={view.key} />\n\t\t\t);\n\t\tdefault:\n\t\t\treturn (\n\t\t\t\t<RootView\n\t\t\t\t\tchoose={choose}\n\t\t\t\t\tclose={close}\n\t\t\t\t\tconfig={config}\n\t\t\t\t\tsetView={setView}\n\t\t\t\t/>\n\t\t\t);\n\t}",
+          "note": "Each union member maps to one component; the default branch is the root view."
+        },
+        {
+          "file": "packages/algorithms/src/languages.ts",
+          "lang": "ts",
+          "lines": "7-35",
+          "snippet": "export const LANGUAGES = [\n\t{ id: \"python\", name: \"Python\", extension: \"py\", indent: 4 },\n\t{ id: \"javascript\", name: \"JavaScript\", extension: \"js\", indent: 2 },\n\t{ id: \"typescript\", name: \"TypeScript\", extension: \"ts\", indent: 2 },\n\t{ id: \"go\", name: \"Go\", extension: \"go\", indent: 4 },\n\t{ id: \"rust\", name: \"Rust\", extension: \"rs\", indent: 4 },\n\t{ id: \"java\", name: \"Java\", extension: \"java\", indent: 4 },\n\t{ id: \"csharp\", name: \"C#\", extension: \"cs\", indent: 4 },\n\t{ id: \"cpp\", name: \"C++\", extension: \"cpp\", indent: 4 },\n\t{ id: \"c\", name: \"C\", extension: \"c\", indent: 4 },\n\t{ id: \"lua\", name: \"Lua\", extension: \"lua\", indent: 4 },\n\t{ id: \"ruby\", name: \"Ruby\", extension: \"rb\", indent: 2 },\n\t{ id: \"kotlin\", name: \"Kotlin\", extension: \"kt\", indent: 4 },\n] as const;\n\nexport type LanguageId = (typeof LANGUAGES)[number][\"id\"];\nexport type Language = (typeof LANGUAGES)[number];\n\nexport const LANGUAGE_IDS = LANGUAGES.map((l) => l.id) as LanguageId[];\n\nexport const DEFAULT_LANGUAGE: LanguageId = \"python\";\n\nexport function getLanguage(id: string): Language | undefined {\n\treturn LANGUAGES.find((l) => l.id === id);\n}\n\nexport function isLanguageId(id: string): id is LanguageId {\n\treturn LANGUAGES.some((l) => l.id === id);\n}",
+          "note": "as const on line 20 makes the ids literal types; lines 22-35 derive the type and a runtime guard from the same array."
+        },
+        {
+          "file": "packages/shared/src/config.ts",
+          "lang": "ts",
+          "lines": "24-32",
+          "snippet": "export const UserConfigSchema = z.object({\n\t// ── test ──────────────────────────────────────────────────────────────\n\tlanguage: z.enum(LANGUAGE_IDS as [string, ...string[]]).default(\"python\"),\n\tcategory: z\n\t\t.enum([\"all\", ...CATEGORY_IDS] as [string, ...string[]])\n\t\t.default(\"all\"),\n\t/** `random` or a specific algorithm slug. */\n\talgorithm: z.string().default(\"random\"),\n\tdifficulty: z.enum([\"normal\", \"expert\", \"master\"]).default(\"normal\"),",
+          "note": "Zod enums built from the catalog arrays, so validation can never disagree with the types."
+        }
+      ],
+      "related": [
+        "state-management/typing-engine",
+        "ui-components/command-palette",
+        "api-design/shared-contracts"
+      ],
+      "custom": false
+    }
+  ]
+}

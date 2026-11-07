@@ -1,0 +1,77 @@
+[
+  {
+    "id": "security",
+    "label": "Security",
+    "blurb": "Keeping data and users safe: encryption, secrets, headers, input validation."
+  },
+  {
+    "id": "auth",
+    "label": "Auth",
+    "blurb": "Who you are and what you may do: sign-in, sessions, tokens, roles."
+  },
+  {
+    "id": "rate-limiting",
+    "label": "Rate limiting",
+    "blurb": "Stopping one client from hogging or abusing the system."
+  },
+  {
+    "id": "state-management",
+    "label": "State management",
+    "blurb": "Where data lives in the UI and how it stays in sync: server vs client state."
+  },
+  {
+    "id": "database",
+    "label": "Database",
+    "blurb": "Schema, queries, migrations, ORMs, caching layers."
+  },
+  {
+    "id": "communication",
+    "label": "Communication",
+    "blurb": "How parts talk: REST, RPC, queues, sockets, webhooks."
+  },
+  {
+    "id": "networking",
+    "label": "Networking",
+    "blurb": "HTTP, CORS, cookies, DNS, proxies, TLS."
+  },
+  {
+    "id": "api-design",
+    "label": "API design",
+    "blurb": "Shaping endpoints, contracts, validation, errors, versioning."
+  },
+  {
+    "id": "system-design",
+    "label": "System design",
+    "blurb": "The big-picture architecture: boundaries, scaling, failure handling."
+  },
+  {
+    "id": "ui-components",
+    "label": "UI components",
+    "blurb": "How the interface is built: component patterns, forms, tables, accessibility."
+  },
+  {
+    "id": "programming-languages",
+    "label": "Programming languages",
+    "blurb": "Language-level ideas worth knowing: types, generics, async, errors."
+  },
+  {
+    "id": "performance",
+    "label": "Performance",
+    "blurb": "Making it fast: caching, lazy loading, indexes, bundle size."
+  },
+  {
+    "id": "testing",
+    "label": "Testing",
+    "blurb": "Proving it works: unit, integration, end-to-end, fixtures."
+  },
+  {
+    "id": "devops",
+    "label": "DevOps",
+    "blurb": "Shipping and running it: builds, CI/CD, containers, monitoring."
+  },
+  {
+    "id": "tooling",
+    "label": "Tooling",
+    "blurb": "The developer setup: monorepo, linting, scripts, package manager."
+  }
+]
