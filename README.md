@@ -97,6 +97,17 @@ The snippets are real code, 10 to 40 lines each. The skill refuses secrets and t
 
 The schema is all you need. The reference viewer uses a force-directed canvas, Markdown for explanations, and Shiki for the snippets; the only non-obvious rule is that a node's parent is its id minus the last segment.
 
+## Demo video
+
+`demo/` is a [Remotion](https://remotion.dev) project that renders the walkthrough video: the skill command, the generated JSON, the viewer, and three concepts opened one after another. It uses a few [remocn](https://remocn.dev) components (the Claude Code composer, the simulated cursor, the blur-in titles, the zoom-blur cut).
+
+```bash
+cd demo && npm i
+node scripts/build-data.mjs     # pre-highlights the example nodes with Shiki
+npx remotion studio             # preview
+npx remotion render ConceptGraphDemo out/concept-graph-demo.mp4
+```
+
 ## License
 
 MIT

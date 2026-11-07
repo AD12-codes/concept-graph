@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+.demo-code pre {
+  margin: 0;
+  background: transparent !important;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: pre;
+}
+.demo-code code {
+  font-family: inherit;
+}
